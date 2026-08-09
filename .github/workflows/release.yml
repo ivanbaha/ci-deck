@@ -113,9 +113,17 @@ jobs:
         run: |
           set -euo pipefail
           npm pack --pack-destination "$RUNNER_TEMP"
-          tar -tzf "$RUNNER_TEMP"/ci-deck-*.tgz | \
-            grep -q '^package/public/assets/main.js$' \
-            || { echo "::error::public/assets/main.js is not in the tarball"; exit 1; }
+
+          # Listed to a file rather than piped: `grep -q` stops reading at the
+          # first match, `tar` then dies on EPIPE, and `pipefail` reports that as
+          # the pipeline's status — failing the check precisely when it passes.
+          tar -tzf "$RUNNER_TEMP"/ci-deck-*.tgz > "$RUNNER_TEMP/contents.txt"
+
+          if ! grep -qx 'package/public/assets/main.js' "$RUNNER_TEMP/contents.txt"; then
+            echo "::error::public/assets/main.js is not in the tarball"
+            cat "$RUNNER_TEMP/contents.txt"
+            exit 1
+          fi
 
       - uses: actions/upload-artifact@v7
         with:
