@@ -1,0 +1,202 @@
+name: Release
+
+# You write the release; publishing it is what ships the package.
+#
+# Nothing goes to npm from pushing a tag, so a tag can sit there while you draft
+# notes against it. Running this by hand is a rehearsal that stops at
+# `npm publish --dry-run` and can never publish.
+#
+# Note: GitHub only runs `release` workflows from the file on the default branch,
+# so changes here have to land on main before they take effect.
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.event.release.tag_name || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    name: verify
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      dist_tag: ${{ steps.version.outputs.dist_tag }}
+      publishing: ${{ steps.version.outputs.publishing }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # The release can point at any commit, so build exactly what it names.
+          ref: ${{ github.event.release.tag_name || github.ref }}
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - run: bun install --frozen-lockfile
+
+      - name: Typecheck
+        run: bun run typecheck
+
+      - name: Test
+        run: bun test
+
+      - name: Work out the version and the dist-tag
+        id: version
+        run: |
+          set -euo pipefail
+          version="$(bun pm pkg get version | tr -d '"')"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+          # A version like 0.1.0-b1 is a pre-release.
+          case "$version" in
+            *-*) version_is_pre=true;  dist_tag=beta   ;;
+            *)   version_is_pre=false; dist_tag=latest ;;
+          esac
+          echo "dist_tag=$dist_tag" >> "$GITHUB_OUTPUT"
+
+          if [ "${{ github.event_name }}" != "release" ]; then
+            echo "publishing=false" >> "$GITHUB_OUTPUT"
+            echo "Rehearsal for ${version}; it would publish under \`${dist_tag}\`. Nothing will be."
+            exit 0
+          fi
+          echo "publishing=true" >> "$GITHUB_OUTPUT"
+
+          tag="${GITHUB_REF_NAME#v}"
+          if [ "$tag" != "$version" ]; then
+            echo "::error::release ${GITHUB_REF_NAME} does not match package.json version ${version}"
+            exit 1
+          fi
+
+          # A version like 0.1.0-b1 is a pre-release. Publishing one as `latest`
+          # would hand it to everyone running `bun add ci-deck`, so the two ways
+          # of saying "pre-release" have to agree before anything ships.
+          case "$version" in
+            *-*) version_is_pre=true ;;
+            *)   version_is_pre=false ;;
+          esac
+          marked_pre="${{ github.event.release.prerelease }}"
+
+          if [ "$version_is_pre" != "$marked_pre" ]; then
+            echo "::error::version ${version} says pre-release=${version_is_pre}, but the release is marked pre-release=${marked_pre}. Fix one of them."
+            exit 1
+          fi
+
+          if [ "$version_is_pre" = "true" ]; then
+            echo "dist_tag=beta" >> "$GITHUB_OUTPUT"
+            echo "Publishing ${version} under the \`beta\` dist-tag."
+          else
+            echo "dist_tag=latest" >> "$GITHUB_OUTPUT"
+            echo "Publishing ${version} under \`latest\`."
+          fi
+
+      - name: Refuse to republish an existing version
+        run: |
+          set -euo pipefail
+          version="${{ steps.version.outputs.version }}"
+          status="$(curl -sS -o /dev/null -w '%{http_code}' "https://registry.npmjs.org/ci-deck/${version}")"
+          echo "registry says ${status} for ci-deck@${version}"
+          if [ "$status" = "200" ]; then
+            echo "::error::ci-deck@${version} is already published — bump the version"
+            exit 1
+          fi
+
+      - name: Build the browser bundle
+        run: bun run build:web
+
+      - name: Pack and check the tarball carries the bundle
+        run: |
+          set -euo pipefail
+          npm pack --pack-destination "$RUNNER_TEMP"
+          tar -tzf "$RUNNER_TEMP"/ci-deck-*.tgz | \
+            grep -q '^package/public/assets/main.js$' \
+            || { echo "::error::public/assets/main.js is not in the tarball"; exit 1; }
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: tarball
+          path: ${{ runner.temp }}/ci-deck-*.tgz
+          if-no-files-found: error
+
+  publish:
+    name: publish to npm
+    needs: verify
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # Required for npm trusted publishing (OIDC). Also what lets a token-based
+      # publish attach a provenance attestation.
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.release.tag_name || github.ref }}
+
+      # bun builds the bundle; the npm CLI publishes, because trusted publishing
+      # and provenance are npm CLI features.
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+
+      - name: Use an npm that supports trusted publishing
+        run: |
+          npm install -g npm@latest
+          npm --version
+
+      - run: bun install --frozen-lockfile
+
+      - name: Build the browser bundle
+        run: bun run build:web
+
+      - name: Publish (rehearsal)
+        if: needs.verify.outputs.publishing != 'true'
+        run: npm publish --dry-run --tag "${{ needs.verify.outputs.dist_tag }}"
+
+      # A trusted publisher can only be configured on a package that already
+      # exists, so the first release needs a granular NPM_TOKEN secret. Configure
+      # the trusted publisher afterwards, delete the secret, and this switches to
+      # OIDC on its own — no edit here.
+      - name: Publish
+        if: needs.verify.outputs.publishing == 'true'
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+          tag="${{ needs.verify.outputs.dist_tag }}"
+          if [ -n "${NODE_AUTH_TOKEN:-}" ]; then
+            echo "Publishing with NPM_TOKEN — bootstrap mode."
+            npm publish --provenance --tag "$tag"
+          else
+            echo "Publishing with trusted publishing (OIDC)."
+            npm publish --tag "$tag"
+          fi
+
+  # Additive only: the notes stay exactly as you wrote them. Drop this job if you
+  # would rather the release carry nothing you did not attach yourself.
+  attach-tarball:
+    name: attach tarball
+    needs: [verify, publish]
+    if: needs.verify.outputs.publishing == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: tarball
+          path: dist
+
+      - name: Upload it to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$GITHUB_REF_NAME" dist/*.tgz --clobber --repo "$GITHUB_REPOSITORY"

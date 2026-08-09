@@ -1,0 +1,98 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: check (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # The credential store and data directory differ per platform, so all
+        # three are exercised even though the tests use injected fakes.
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - run: bun install --frozen-lockfile
+
+      - name: Typecheck
+        run: bun run typecheck
+
+      - name: Test
+        run: bun test
+
+      - name: Build the browser bundle
+        run: bun run build:web
+
+  # Proves the floor in `engines.bun` is real: Bun.serve({ routes }) landed in
+  # 1.2.3, so anything older cannot run the server at all.
+  minimum-bun:
+    name: check (bun ${{ matrix.bun }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        bun: ['1.2.3']
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ matrix.bun }}
+
+      - run: bun install --frozen-lockfile
+      - run: bun test
+      - run: bun run build:web
+
+      - name: Start the server and check it answers
+        run: |
+          bun run src/cli.ts --db "$RUNNER_TEMP/ci-deck.db" --port 8788 &
+          for _ in $(seq 1 30); do
+            curl -fsS http://127.0.0.1:8788/api/state > /dev/null && exit 0
+            sleep 1
+          done
+          echo "server did not come up" >&2
+          exit 1
+
+  package:
+    name: package contents
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      # Packed with npm, because npm is what the release workflow publishes
+      # with. Packing here with bun would check a tarball nobody ships.
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+
+      - run: bun install --frozen-lockfile
+
+      - name: Pack and list what would be published
+        run: |
+          set -euo pipefail
+          npm pack --pack-destination "$RUNNER_TEMP"
+          tar -tzf "$RUNNER_TEMP"/ci-deck-*.tgz | tee /dev/stderr | \
+            grep -q '^package/public/assets/main.js$' \
+            || { echo "public/assets/main.js is not in the tarball" >&2; exit 1; }

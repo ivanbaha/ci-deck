@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>CI Deck</title>
+    <link rel="icon" type="image/svg+xml" href="/assets/favicon.svg">
+    <link rel="stylesheet" href="/assets/app.css">
+</head>
+
+<body>
+    <header class="topbar">
+        <span class="brand" id="brand">CI Deck</span>
+        <span class="topbar-spacer"></span>
+        <span class="actions" id="topbar-actions"></span>
+    </header>
+
+    <div class="alert" id="banner" role="alert" hidden></div>
+
+    <main class="wrap">
+        <nav class="tabs" id="tabs" aria-label="Filter by status"></nav>
+
+        <!-- Tags narrow the board across namespaces; sections stay by namespace. -->
+        <div class="tagbar" id="tagbar" aria-label="Filter by tag"></div>
+
+        <!-- Everything about the sweep lives here, right above the bar it drives. -->
+        <div class="toolbar">
+            <input type="search" class="input input-search" id="search" placeholder="Search repos"
+                aria-label="Search repos">
+            <select class="input" id="group" aria-label="Filter by group"></select>
+            <span class="toolbar-spacer"></span>
+            <span class="sweep" id="sweep" aria-live="polite"></span>
+            <label class="field" for="interval">Refresh every</label>
+            <select class="input" id="interval" aria-label="Refresh interval"></select>
+            <span class="actions" id="sweep-actions"></span>
+        </div>
+
+        <div class="progress" id="progress" aria-hidden="true">
+            <div class="progress-bar" id="progress-bar"></div>
+        </div>
+
+        <div class="board-scroll">
+            <table class="board" id="board">
+            <thead>
+                <tr>
+                    <th class="col-status">Status</th>
+                    <th class="col-repo">Repo</th>
+                    <th class="col-pipeline">Pipeline</th>
+                    <th class="col-commit">Commit</th>
+                    <th class="col-stages">Stages</th>
+                    <th class="col-time">Updated</th>
+                    <th class="col-actions"><span class="sr-only">Actions</span></th>
+                </tr>
+            </thead>
+            <tbody id="placeholder">
+                <tr>
+                    <td colspan="7" class="empty">Connecting…</td>
+                </tr>
+            </tbody>
+            <tbody id="first-run" hidden>
+                <tr>
+                    <td colspan="7">
+                        <div class="first-run">
+                            <h2>Nothing is being watched yet</h2>
+                            <p>Add a repo by name, by <code>group/subgroup/repo</code> path, or by pasting any
+                                GitLab project URL. Watched repos are remembered in a local database.</p>
+                            <div class="first-run-actions" id="first-run-actions"></div>
+                        </div>
+                    </td>
+                </tr>
+            </tbody>
+            </table>
+        </div>
+    </main>
+
+    <div id="modal-root"></div>
+    <div id="toasts" class="toasts" aria-live="assertive"></div>
+
+    <script type="module" src="/assets/main.js"></script>
+</body>
+
+</html>

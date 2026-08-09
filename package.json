@@ -1,0 +1,53 @@
+{
+    "name": "ci-deck",
+    "version": "0.1.0-b1",
+    "description": "Watch and control GitLab pipelines for many repos on one page",
+    "author": "Ivan Baha",
+    "license": "Apache-2.0",
+    "homepage": "https://github.com/ivanbaha/ci-deck#readme",
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/ivanbaha/ci-deck.git"
+    },
+    "bugs": {
+        "url": "https://github.com/ivanbaha/ci-deck/issues"
+    },
+    "type": "module",
+    "module": "src/cli.ts",
+    "bin": {
+        "ci-deck": "src/cli.ts"
+    },
+    "engines": {
+        "bun": ">=1.2.3"
+    },
+    "files": [
+        "src",
+        "web",
+        "public",
+        "example.env",
+        "README.md"
+    ],
+    "publishConfig": {
+        "access": "public"
+    },
+    "keywords": [
+        "gitlab",
+        "ci",
+        "pipelines",
+        "dashboard",
+        "cli",
+        "bun"
+    ],
+    "scripts": {
+        "start": "bun run src/cli.ts",
+        "dev": "bun --watch run src/cli.ts --rebuild",
+        "build:web": "bun run scripts/build-web.ts",
+        "prepack": "bun run scripts/build-web.ts",
+        "typecheck": "tsc --noEmit",
+        "test": "bun test"
+    },
+    "devDependencies": {
+        "@types/bun": "1.3.14",
+        "typescript": "7.0.2"
+    }
+}

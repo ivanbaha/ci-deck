@@ -1,0 +1,1766 @@
+/* Dark UI built on GitLab's Pajamas dark tokens. */
+:root {
+    --bg: #1b1a1f;
+    --bg-raised: #232229;
+    --bg-hover: #2b2a31;
+    --bg-header: #141317;
+    --border: #3a3940;
+    --border-strong: #56545c;
+    --text: #ececef;
+    --text-muted: #a4a3a8;
+    --text-dim: #85848a;
+    --link: #79b7f0;
+    --blue: #428fdc;
+    --blue-strong: #63a6e9;
+    --green: #2da160;
+    --red: #ec5941;
+    --orange: #d99530;
+    --radius: 4px;
+    --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    --mono: "JetBrains Mono", "Cascadia Mono", Menlo, Consolas, "Liberation Mono", monospace;
+}
+
+* {
+    box-sizing: border-box;
+}
+
+/*
+ * Every `display` below would otherwise beat the user-agent rule for [hidden],
+ * which is how a button asked to hide stays on screen — `.btn` sets inline-flex.
+ */
+[hidden] {
+    display: none !important;
+}
+
+html,
+body {
+    background: var(--bg);
+}
+
+body {
+    margin: 0;
+    font-family: var(--font);
+    font-size: 14px;
+    line-height: 1.5;
+    color: var(--text);
+    color-scheme: dark;
+}
+
+a {
+    color: var(--link);
+    text-decoration: none;
+}
+
+a:hover,
+a:focus-visible {
+    text-decoration: underline;
+}
+
+.sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+    border: 0;
+}
+
+:focus-visible {
+    outline: 2px solid var(--blue-strong);
+    outline-offset: 1px;
+}
+
+/* ---------- top bar ---------- */
+
+/*
+ * Sticky, along with the table header below it. The tabs and toolbar are
+ * deliberately left to scroll: pinning those too costs about a fifth of a
+ * laptop viewport, which is worse than scrolling back up for them.
+ */
+.topbar {
+    position: sticky;
+    top: 0;
+    z-index: 12;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 0 32px;
+    height: 48px;
+    background: var(--bg-header);
+    border-bottom: 1px solid var(--border);
+}
+
+.brand {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    font-weight: 650;
+    font-size: 19px;
+    letter-spacing: 0.2px;
+}
+
+.brand svg {
+    color: var(--blue-strong);
+    flex: none;
+}
+
+.topbar-spacer,
+.toolbar-spacer {
+    flex: 1;
+}
+
+/*
+ * Sits next to the interval control it belongs to, but dimmer than the control's
+ * own label — otherwise the two run together into one sentence. Shrinks before
+ * the toolbar wraps: the interval and the button matter more than the countdown.
+ */
+.sweep {
+    font-size: 12px;
+    color: var(--text-dim);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    min-width: 0;
+    margin-right: 8px;
+}
+
+/* ---------- connection ---------- */
+.btn-conn {
+    gap: 7px;
+    max-width: 280px;
+    color: var(--text-muted);
+}
+
+.btn-conn .conn-label {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.btn-conn svg {
+    color: var(--text-muted);
+}
+
+.btn-conn:hover {
+    color: var(--text);
+}
+
+.btn-conn:hover svg,
+.btn-conn.conn-ok:hover svg {
+    color: var(--text);
+}
+
+.btn-conn.conn-ok svg {
+    color: var(--green);
+}
+
+/* Unreachable is a condition that clears itself; a rejected token is not. */
+.btn-conn.conn-warn {
+    border-color: var(--orange);
+    color: var(--orange);
+}
+
+.btn-conn.conn-warn svg {
+    color: var(--orange);
+}
+
+.btn-conn.conn-bad {
+    border-color: var(--red);
+    background: #3d160c;
+    color: #fbd5cd;
+}
+
+.btn-conn.conn-bad svg {
+    color: var(--red);
+}
+
+.btn-conn.conn-none {
+    border-color: var(--blue);
+    color: var(--blue-strong);
+}
+
+.btn-conn.conn-none svg {
+    color: var(--blue-strong);
+}
+
+/* ---------- layout ---------- */
+.wrap {
+    max-width: 1600px;
+    margin: 0 auto;
+    padding: 16px;
+}
+
+.alert {
+    margin: 0;
+    padding: 10px 16px;
+    background: #4a1a10;
+    border-bottom: 1px solid var(--red);
+    color: #fbd5cd;
+}
+
+.tabs {
+    display: flex;
+    gap: 4px;
+    border-bottom: 1px solid var(--border);
+}
+
+.tab {
+    appearance: none;
+    background: none;
+    border: 0;
+    border-bottom: 2px solid transparent;
+    padding: 8px 12px;
+    font: inherit;
+    color: var(--text-muted);
+    cursor: pointer;
+}
+
+.tab:hover {
+    color: var(--text);
+}
+
+.tab[aria-selected="true"] {
+    color: var(--text);
+    font-weight: 600;
+    border-bottom-color: var(--blue);
+}
+
+.tab .count {
+    display: inline-block;
+    min-width: 20px;
+    margin-left: 6px;
+    padding: 0 6px;
+    border-radius: 10px;
+    background: var(--bg-hover);
+    color: var(--text-muted);
+    font-size: 12px;
+    font-weight: 400;
+}
+
+.toolbar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 12px 0;
+    flex-wrap: wrap;
+}
+
+/* ---------- tags ---------- */
+
+/*
+ * Tags filter; they do not section. A repo can carry several, so sectioning by
+ * one would put the same row under three headings — the namespace stays the
+ * thing the board is filed by, and this narrows it.
+ */
+.tagbar {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+    padding: 10px 0 0;
+}
+
+.tagbar:empty {
+    display: none;
+}
+
+.tagbar-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    color: var(--text-dim);
+    font-size: 12px;
+    margin-right: 2px;
+}
+
+.tagbar-scope {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    white-space: nowrap;
+}
+
+.tag-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 1px 8px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--bg-raised);
+    color: var(--text-muted);
+    font-size: 11px;
+    line-height: 18px;
+    white-space: nowrap;
+}
+
+.tag-chip-filter {
+    font: inherit;
+    font-size: 12px;
+    cursor: pointer;
+}
+
+.tag-chip-filter:hover {
+    border-color: var(--border-strong);
+    color: var(--text);
+}
+
+.tag-chip-filter.is-active {
+    border-color: var(--blue);
+    background: #13293d;
+    color: var(--blue-strong);
+}
+
+.tag-chip-count {
+    color: var(--text-dim);
+    font-size: 11px;
+}
+
+.tag-chip-filter.is-active .tag-chip-count {
+    color: var(--blue-strong);
+}
+
+/* On a row: quiet until wanted, and the whole cluster is the edit affordance. */
+.repo-tags {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    padding: 0;
+    border: 0;
+    background: none;
+    font: inherit;
+    cursor: pointer;
+    min-width: 0;
+}
+
+.repo-tags .tag-chip {
+    font-size: 10px;
+    line-height: 15px;
+    padding: 0 6px;
+}
+
+.repo-tags:hover .tag-chip {
+    border-color: var(--border-strong);
+    color: var(--text);
+}
+
+.tag-chip-more {
+    color: var(--text-dim);
+}
+
+/* Nothing tagged yet: a mark that appears on hover rather than an empty gap. */
+.repo-tags-empty {
+    color: var(--border);
+    opacity: 0;
+    transition: opacity 120ms ease;
+}
+
+.board tr.repo:hover .repo-tags-empty,
+.repo-tags-empty:focus-visible {
+    opacity: 1;
+}
+
+.repo-tags-empty:hover {
+    color: var(--text-muted);
+}
+
+.field {
+    color: var(--text-muted);
+    font-size: 13px;
+}
+
+.field-unit {
+    color: var(--text-muted);
+    margin-left: -4px;
+}
+
+.input {
+    height: 32px;
+    padding: 0 8px;
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius);
+    background: var(--bg-raised);
+    font: inherit;
+    color: var(--text);
+}
+
+.input::placeholder {
+    color: var(--text-dim);
+}
+
+.input:focus {
+    border-color: var(--blue);
+}
+
+.input-search {
+    width: 260px;
+}
+
+.input-num {
+    width: 72px;
+}
+
+.btn {
+    height: 32px;
+    padding: 0 12px;
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius);
+    background: var(--bg-raised);
+    color: var(--text);
+    font: inherit;
+    cursor: pointer;
+}
+
+.btn:hover {
+    background: var(--bg-hover);
+    border-color: var(--text-dim);
+}
+
+.btn:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+}
+
+.btn-confirm {
+    background: #1068bf;
+    border-color: #1068bf;
+    color: #fff;
+}
+
+.btn-confirm:hover {
+    background: var(--blue);
+    border-color: var(--blue);
+}
+
+.btn-danger {
+    background: #a1230c;
+    border-color: #a1230c;
+    color: #fff;
+}
+
+.btn-danger:hover {
+    background: #c0341a;
+    border-color: #c0341a;
+}
+
+.btn-inverted {
+    background: transparent;
+    border-color: var(--border-strong);
+    color: var(--text);
+}
+
+.btn-inverted:hover {
+    background: var(--bg-hover);
+}
+
+.btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+}
+
+.btn svg {
+    display: block;
+    flex: none;
+}
+
+.btn-icon {
+    width: 34px;
+    padding: 0;
+    color: var(--text-muted);
+    font-size: 14px;
+    line-height: 1;
+}
+
+.btn-icon:hover:not(:disabled) {
+    color: var(--text);
+}
+
+.btn-confirm.btn-icon,
+.btn-danger.btn-icon {
+    color: #fff;
+}
+
+/* Tones tint the glyph only — muted enough to sit in a dense row without shouting. */
+.btn.tone-info svg {
+    color: #6f9dd0;
+}
+
+.btn.tone-positive svg {
+    color: #63a06f;
+}
+
+.btn.tone-caution svg {
+    color: #c9963f;
+}
+
+.btn.tone-danger svg {
+    color: #c4695a;
+}
+
+.btn.tone-muted svg {
+    color: #7b7a80;
+}
+
+.btn:hover:not(:disabled) svg {
+    color: inherit;
+}
+
+.btn:disabled svg {
+    color: inherit;
+}
+
+.btn-sm {
+    height: 26px;
+    width: auto;
+    min-width: 26px;
+    padding: 0 4px;
+}
+
+.btn-sm.btn-icon {
+    width: 26px;
+    padding: 0;
+}
+
+/* ---------- split button ---------- */
+.split {
+    display: inline-flex;
+}
+
+.split>.btn:first-child {
+    border-top-right-radius: 0;
+    border-bottom-right-radius: 0;
+}
+
+.btn-split {
+    width: 28px;
+    padding: 0;
+    border-top-left-radius: 0;
+    border-bottom-left-radius: 0;
+    /* One hairline between the halves rather than two stacked borders. */
+    border-left-color: rgba(0, 0, 0, 0.28);
+}
+
+/* ---------- menu ---------- */
+.menu {
+    position: fixed;
+    z-index: 25;
+    min-width: 190px;
+    padding: 4px;
+    background: var(--bg-raised);
+    border: 1px solid var(--border-strong);
+    border-radius: 6px;
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.5);
+}
+
+.menu-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    padding: 7px 10px;
+    border: 0;
+    border-radius: var(--radius);
+    background: none;
+    font: inherit;
+    font-size: 13px;
+    color: var(--text);
+    text-align: left;
+    cursor: pointer;
+}
+
+.menu-item svg {
+    flex: none;
+    color: var(--text-dim);
+}
+
+.menu-item:hover,
+.menu-item:focus-visible {
+    background: var(--bg-hover);
+}
+
+.menu-item:hover svg,
+.menu-item:focus-visible svg {
+    color: var(--text-muted);
+}
+
+.progress {
+    height: 2px;
+    background: var(--bg-raised);
+    overflow: hidden;
+}
+
+.progress-bar {
+    height: 100%;
+    width: 0;
+    background: var(--blue);
+    transition: width 160ms linear;
+}
+
+/* ---------- board ---------- */
+
+/*
+ * Below the point where the columns stop fitting, scroll rather than shrink.
+ * A fixed layout with no floor silently squeezes columns to nothing, and
+ * `overflow: hidden` on the cells means the content simply disappears.
+ *
+ * Only below that point, though: a scroll container on either axis would become
+ * the scrollport the sticky header sticks to, and that container never scrolls
+ * vertically — so the header would stop following the page.
+ */
+@media (max-width: 820px) {
+    .board-scroll {
+        overflow-x: auto;
+    }
+}
+
+.board {
+    width: 100%;
+    min-width: 780px;
+    border-collapse: collapse;
+    table-layout: fixed;
+}
+
+.board th {
+    position: sticky;
+    top: 48px;
+    z-index: 4;
+    text-align: left;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-muted);
+    padding: 8px;
+    border-bottom: 1px solid var(--border);
+    background: var(--bg-raised);
+}
+
+.board td {
+    padding: 8px;
+    border-bottom: 1px solid var(--border);
+    vertical-align: middle;
+    overflow: hidden;
+}
+
+.board tr.repo:hover td {
+    background: var(--bg-raised);
+}
+
+/*
+ * Widths are assigned to every column except the commit, which takes whatever is
+ * left. The stage bubbles are the reason the board exists, so they get a real
+ * width instead of the remainder — the other way round, a narrow window starved
+ * them to zero while the commit message kept a quarter of the table.
+ */
+.col-status {
+    width: 104px;
+}
+
+.col-repo {
+    width: 232px;
+}
+
+.col-pipeline {
+    width: 56px;
+}
+
+/* No width: the commit title is the one thing that can ellipsise gracefully. */
+
+.col-stages {
+    width: 236px;
+}
+
+/* Wide enough for "checked 12:58 PM" on one line in a 12-hour locale. */
+.col-time {
+    width: 128px;
+    white-space: nowrap;
+}
+
+/* Five buttons, two separators and the cell padding — anything less clips them. */
+.col-actions {
+    width: 216px;
+}
+
+/*
+ * On the board the controls are secondary to the data. Five outlined boxes on
+ * every row is 240 boxes at the watch-list sizes this is built for, all of them
+ * competing with the thing you came to read. So: glyph only, chrome only when
+ * you actually reach for one.
+ */
+.col-actions .btn {
+    width: 30px;
+    background: none;
+    border-color: transparent;
+    opacity: 0.62;
+    transition: opacity 120ms ease, background-color 120ms ease, border-color 120ms ease;
+}
+
+.board tr.repo:hover .col-actions .btn:not(:disabled) {
+    opacity: 1;
+}
+
+.col-actions .btn:hover:not(:disabled),
+.col-actions .btn:focus-visible {
+    opacity: 1;
+    background: var(--bg-hover);
+    border-color: var(--border-strong);
+}
+
+.col-actions .btn:disabled {
+    opacity: 0.22;
+}
+
+/* With the boxes gone the separators carry the grouping, so keep them faint. */
+.col-actions .action-group+.action-group {
+    padding-left: 6px;
+    border-left-color: var(--bg-hover);
+}
+
+/* Under this the commit has shrunk past usefulness; the pipeline link remains. */
+@media (max-width: 1180px) {
+    .col-commit {
+        display: none;
+    }
+}
+
+/*
+ * A section per namespace, instead of repeating the same group chip down forty
+ * rows. Sticks under the column header so you always know which one you are in.
+ */
+/*
+ * Pinned one at a time by `updateStickyGroups`, never by CSS alone: a sticky
+ * table cell is bound by the table rather than by its row group, so every
+ * heading that scrolled past would stay pinned at this same offset — six of them
+ * stacked, showing whichever painted last instead of the section you are in.
+ */
+.board tr.group td {
+    padding: 6px 8px 5px;
+    background: var(--bg);
+    border-bottom: 1px solid var(--border);
+}
+
+.board tr.group.group-pinned td {
+    position: sticky;
+    top: var(--sticky-offset, 83px);
+    z-index: 3;
+}
+
+.group-head {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+}
+
+.group-name {
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.6px;
+    text-transform: uppercase;
+    color: var(--text-muted);
+}
+
+.group-count {
+    font-size: 11px;
+    color: var(--text-dim);
+}
+
+.group-failed {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--red);
+}
+
+.repo-name {
+    font-weight: 600;
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* The group is the section heading now; the chip would only repeat it. */
+.repo-sub .chip {
+    display: none;
+}
+
+/* Why the row is red, without opening the stage popover. */
+.fail-hint {
+    color: #f57f6c;
+    /* The one part of the sub-line allowed to shrink, so the ref stays whole. */
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.repo-ref {
+    flex: none;
+}
+
+.repo-sub {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    color: var(--text-dim);
+}
+
+.chip {
+    padding: 0 6px;
+    border-radius: 8px;
+    background: var(--bg-hover);
+    color: var(--text-muted);
+    font-size: 11px;
+}
+
+/*
+ * Paused rows are still readable, just visibly out of the rotation. Since the
+ * amber flag now says so outright, the fade only has to hint — and it has to be
+ * gentle, because `opacity` on the cell caps everything inside it, the flag
+ * included.
+ */
+.repo-paused td {
+    opacity: 0.72;
+}
+
+.repo-paused:hover td {
+    opacity: 1;
+}
+
+.repo-paused .col-actions,
+.repo-paused td:last-child {
+    opacity: 1;
+}
+
+/* The one thing on a paused row that must not fade with it. */
+.paused-flag {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    flex: none;
+    padding: 0 5px 0 3px;
+    border-radius: 8px;
+    background: #4a2f0c;
+    color: #f0a83a;
+    font-size: 11px;
+    font-weight: 600;
+}
+
+.paused-flag svg {
+    flex: none;
+}
+
+.mono {
+    font-family: var(--mono);
+    font-size: 12px;
+}
+
+.commit-title {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.muted {
+    color: var(--text-dim);
+    font-size: 12px;
+}
+
+.error-text {
+    color: var(--red);
+    font-size: 12px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    display: block;
+}
+
+.empty {
+    padding: 32px 8px;
+    text-align: center;
+    color: var(--text-dim);
+}
+
+.first-run {
+    max-width: 560px;
+    margin: 40px auto;
+    text-align: center;
+}
+
+.first-run h2 {
+    margin: 0 0 8px;
+    font-size: 18px;
+}
+
+.first-run p {
+    margin: 0 0 20px;
+    color: var(--text-muted);
+}
+
+.first-run code {
+    font-family: var(--mono);
+    font-size: 12px;
+    padding: 1px 4px;
+    border-radius: 3px;
+    background: var(--bg-hover);
+}
+
+.first-run-actions {
+    display: flex;
+    gap: 8px;
+    justify-content: center;
+}
+
+.spinner {
+    display: inline-block;
+    width: 12px;
+    height: 12px;
+    border: 2px solid var(--border);
+    border-top-color: var(--blue-strong);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+    vertical-align: -2px;
+}
+
+@keyframes spin {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+
+    .spinner {
+        animation-duration: 2.4s;
+    }
+
+    .progress-bar {
+        transition: none;
+    }
+}
+
+/* ---------- status colours ---------- */
+.s-success {
+    --status: var(--green);
+    --status-bg: #14311f;
+}
+
+.s-failed {
+    --status: var(--red);
+    --status-bg: #3d160c;
+}
+
+.s-running {
+    --status: var(--blue-strong);
+    --status-bg: #13293d;
+}
+
+/*
+ * The five colourless states were within a few percent of each other and read as
+ * one shade. They are told apart by weight instead of hue — the less a stage
+ * happened, the dimmer it is — with one exception.
+ *
+ * `manual` is that exception: it is the only grey you can act on, so it is the
+ * brightest of them and outlined rather than solid, which says "not run, but it
+ * could be" instead of "not run, and that is that".
+ */
+
+/* Pending is "nothing has happened yet", so it reads as neutral rather than warm. */
+.s-pending {
+    --status: #9a99a0;
+    --status-bg: #2e2d34;
+}
+
+.s-warning {
+    --status: #e0812e;
+    --status-bg: #3d2810;
+}
+
+.s-canceled {
+    --status: #82818a;
+    --status-bg: #292830;
+}
+
+.s-skipped {
+    --status: #74737b;
+    --status-bg: #232229;
+}
+
+.s-manual {
+    --status: #cfced5;
+    --status-bg: #38373f;
+}
+
+.s-neutral {
+    --status: #82818a;
+    --status-bg: #292830;
+}
+
+/*
+ * Paused is CI Deck's own state, not one of GitLab's, and it is the one grey that
+ * is not grey: amber, because it means "this is not being checked" — a thing you
+ * chose and might want to undo, rather than a thing that simply happened.
+ */
+.s-paused {
+    --status: var(--orange);
+    --status-bg: #3d2810;
+}
+
+.badge.s-manual {
+    border-style: dashed;
+}
+
+.badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    height: 24px;
+    padding: 0 8px 0 6px;
+    border: 1px solid var(--status);
+    border-radius: 12px;
+    background: var(--status-bg);
+    color: var(--status);
+    font-size: 12px;
+    font-weight: 600;
+    white-space: nowrap;
+}
+
+.badge svg {
+    display: block;
+    flex: none;
+}
+
+/*
+ * The one status that reads by moving. A static symbol at 9px says nothing;
+ * an activity pulse says "in flight" before you have read anything else.
+ */
+.s-running svg {
+    transform-origin: center;
+    animation: pulse 3s ease-in-out infinite;
+}
+
+@keyframes pulse {
+    0%,
+    100% {
+        opacity: 1;
+        transform: scale(1);
+    }
+    50% {
+        opacity: 0.5;
+        transform: scale(0.88);
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .s-running svg {
+        animation-duration: 4s;
+    }
+}
+
+/* ---------- stage bubbles ---------- */
+.stages {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    flex-wrap: wrap;
+}
+
+/* Filled by default, hollow on hover — the inverse reads as "pressed". */
+.bubble {
+    width: 22px;
+    height: 22px;
+    padding: 0;
+    display: inline-grid;
+    place-items: center;
+    border: 1px solid var(--status);
+    border-radius: 50%;
+    background: var(--status);
+    color: var(--bg-header);
+    line-height: 1;
+    cursor: pointer;
+}
+
+.bubble svg {
+    display: block;
+}
+
+.bubble:hover,
+.bubble[aria-expanded="true"] {
+    background: transparent;
+    color: var(--status);
+}
+
+/* The one hollow bubble, and so the one that fills on hover rather than empties. */
+.bubble.s-manual {
+    background: transparent;
+    color: var(--status);
+    border-style: dashed;
+}
+
+.bubble.s-manual:hover,
+.bubble.s-manual[aria-expanded="true"] {
+    background: var(--status);
+    color: var(--bg-header);
+    border-style: solid;
+}
+
+.bubble-sm {
+    width: 16px;
+    height: 16px;
+    flex: none;
+    cursor: default;
+}
+
+.stage-link {
+    color: var(--border-strong);
+    font-size: 11px;
+    padding: 0 1px;
+}
+
+.action-group {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.action-group+.action-group {
+    padding-left: 8px;
+    border-left: 1px solid var(--border);
+}
+
+.actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: nowrap;
+    white-space: nowrap;
+}
+
+.actions-end {
+    justify-content: flex-end;
+}
+
+.job-action-empty {
+    display: inline-block;
+    width: 26px;
+}
+
+/* ---------- stage popover ---------- */
+.popover {
+    position: fixed;
+    z-index: 15;
+    min-width: 260px;
+    max-width: min(460px, calc(100vw - 24px));
+    max-height: min(60vh, 520px);
+    overflow: auto;
+    padding: 10px 12px;
+    background: var(--bg-raised);
+    border: 1px solid var(--border-strong);
+    border-radius: 6px;
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.5);
+}
+
+.popover-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--border);
+}
+
+.popover-title {
+    margin: 0;
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+    color: var(--text-muted);
+}
+
+.jobs-list {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.job-row {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    border: 1px solid transparent;
+    border-radius: var(--radius);
+    padding-right: 4px;
+}
+
+.job-row:hover {
+    border-color: var(--status);
+    background: var(--status-bg);
+}
+
+.job {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex: 1;
+    min-width: 0;
+    padding: 5px 8px;
+    border: 0;
+    border-radius: var(--radius);
+    background: none;
+    font: inherit;
+    font-size: 13px;
+    color: var(--text);
+    cursor: pointer;
+    text-align: left;
+}
+
+.job-actions {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    flex: none;
+}
+
+/*
+ * Controls stay quiet until the row is hovered or one of them has focus — but
+ * only quiet. Below roughly 0.5 the glyph drops under the 3:1 contrast a control
+ * needs, and reads as "there is nothing here" rather than "this is secondary".
+ */
+.job-actions .btn {
+    opacity: 0.55;
+    transition: opacity 120ms ease;
+}
+
+.job-row:hover .job-actions .btn,
+.job-actions .btn:focus-visible {
+    opacity: 1;
+}
+
+.job-actions .btn:disabled {
+    opacity: 0.25;
+}
+
+/* Nothing hovers on a touch screen, so quiet would mean permanently faint. */
+@media (hover: none) {
+    .job-actions .btn {
+        opacity: 1;
+    }
+}
+
+.job-name {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.job-meta {
+    color: var(--text-dim);
+    font-size: 11px;
+    white-space: nowrap;
+}
+
+/* ---------- modal ---------- */
+.overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(10, 9, 12, 0.72);
+    display: grid;
+    place-items: center;
+    padding: 24px;
+    z-index: 20;
+}
+
+.modal {
+    display: flex;
+    flex-direction: column;
+    width: min(1100px, 100%);
+    max-height: calc(100vh - 48px);
+    background: var(--bg-raised);
+    border: 1px solid var(--border-strong);
+    border-radius: 6px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.55);
+    overflow: hidden;
+}
+
+.modal-sm {
+    width: min(520px, 100%);
+}
+
+/* Log viewer wants the full height available, not just its content height. */
+.modal-tall {
+    height: calc(100vh - 48px);
+}
+
+.modal-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border);
+    flex: 0 0 auto;
+}
+
+.modal-title {
+    margin: 0;
+    font-size: 15px;
+    font-weight: 600;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.modal-body {
+    padding: 16px;
+    overflow: auto;
+    /* Without this a flex item refuses to shrink below its content height. */
+    min-height: 0;
+    flex: 1 1 auto;
+}
+
+.modal-body-flush {
+    padding: 0;
+    background: var(--bg-header);
+}
+
+.modal-foot {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 12px 16px;
+    border-top: 1px solid var(--border);
+    flex: 0 0 auto;
+}
+
+.modal-foot .spacer {
+    flex: 1;
+}
+
+.form-row {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin-bottom: 12px;
+}
+
+.form-row label {
+    font-size: 13px;
+    font-weight: 600;
+}
+
+.form-row .hint {
+    color: var(--text-dim);
+    font-size: 12px;
+}
+
+.form-row .input {
+    width: 100%;
+}
+
+.form-error {
+    color: var(--red);
+    font-size: 13px;
+    min-height: 20px;
+}
+
+/* ---------- tag dialogs ---------- */
+.tag-picker {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+    padding: 4px;
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius);
+    background: var(--bg-raised);
+}
+
+.tag-picker:focus-within {
+    border-color: var(--blue);
+}
+
+.tag-chips {
+    display: contents;
+}
+
+.tag-chip-editable {
+    padding-right: 2px;
+    background: var(--bg-hover);
+}
+
+.tag-chip-editable .btn {
+    height: 16px;
+    width: 16px;
+    min-width: 16px;
+    border: 0;
+    background: none;
+    color: var(--text-dim);
+}
+
+.tag-chip-editable .btn:hover {
+    background: none;
+    color: var(--red);
+}
+
+.tag-input {
+    flex: 1;
+    min-width: 130px;
+    height: 24px;
+    border: 0;
+    background: none;
+    padding: 0 4px;
+}
+
+.tag-input:focus {
+    outline: none;
+}
+
+/* Two panes: the tags on the left, the repos that carry the chosen one on the
+   right. Seven passes here instead of eighty single-repo dialogs. */
+.tag-manage {
+    display: grid;
+    grid-template-columns: minmax(180px, 260px) 1fr;
+    gap: 16px;
+    min-height: 340px;
+}
+
+.tag-manage-side {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    min-width: 0;
+}
+
+.tag-manage-list {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    max-height: 46vh;
+    overflow: auto;
+}
+
+.tag-manage-row {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    border: 1px solid transparent;
+    border-radius: var(--radius);
+    padding-right: 2px;
+}
+
+.tag-manage-row:hover {
+    background: var(--bg-hover);
+}
+
+.tag-manage-row.is-selected {
+    border-color: var(--blue);
+    background: #13293d;
+}
+
+.tag-manage-pick {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex: 1;
+    min-width: 0;
+    padding: 6px 8px;
+    border: 0;
+    background: none;
+    font: inherit;
+    font-size: 13px;
+    color: var(--text);
+    text-align: left;
+    cursor: pointer;
+}
+
+.tag-manage-name {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.tag-manage-new {
+    display: flex;
+    gap: 6px;
+}
+
+.tag-manage-new .input {
+    flex: 1;
+    min-width: 0;
+}
+
+.tag-manage-main {
+    min-width: 0;
+}
+
+.tag-member-head {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 8px;
+    flex-wrap: wrap;
+}
+
+.tag-member-head .input {
+    flex: 1;
+    min-width: 140px;
+}
+
+.tag-member-head .spacer {
+    flex: 1;
+}
+
+.tag-member-list {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    max-height: 42vh;
+    overflow: auto;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 4px;
+}
+
+.tag-member {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 4px 6px;
+    border-radius: var(--radius);
+    font-size: 13px;
+    cursor: pointer;
+}
+
+.tag-member:hover {
+    background: var(--bg-hover);
+}
+
+.tag-member-name {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* ---------- import ---------- */
+.dropzone {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    padding: 22px 16px;
+    border: 1px dashed var(--border-strong);
+    border-radius: 6px;
+    background: var(--bg-header);
+    color: var(--text-dim);
+    cursor: pointer;
+}
+
+.dropzone:hover,
+.dropzone:focus-visible {
+    border-color: var(--blue);
+    color: var(--text-muted);
+}
+
+.dropzone-over {
+    border-color: var(--blue);
+    border-style: solid;
+    background: #13293d;
+    color: var(--text);
+}
+
+.dropzone-main {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text);
+}
+
+.import-summary {
+    margin-top: 12px;
+    font-size: 13px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.import-summary:empty {
+    margin: 0;
+}
+
+.import-file {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    color: var(--text-muted);
+    font-family: var(--mono);
+    font-size: 12px;
+}
+
+.import-names {
+    font-family: var(--mono);
+}
+
+.import-skipped-head {
+    margin-top: 4px;
+    color: var(--text-muted);
+}
+
+.import-skipped {
+    margin: 0;
+    padding-left: 18px;
+    max-height: 180px;
+    overflow: auto;
+    color: var(--text-muted);
+    font-size: 12px;
+}
+
+.import-skipped code {
+    font-family: var(--mono);
+    color: var(--text);
+}
+
+/* ---------- job log ---------- */
+.terminal {
+    margin: 0;
+    padding: 12px 16px;
+    font-family: var(--mono);
+    font-size: 12.5px;
+    line-height: 1.45;
+    color: #ececef;
+    background: var(--bg-header);
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+.terminal .a-b {
+    font-weight: 700;
+}
+
+.terminal .a-u {
+    text-decoration: underline;
+}
+
+.terminal .a-fg-30 {
+    color: #6e6d73;
+}
+
+.terminal .a-fg-31 {
+    color: #f57f6c;
+}
+
+.terminal .a-fg-32 {
+    color: #91d4a8;
+}
+
+.terminal .a-fg-33 {
+    color: #e9be74;
+}
+
+.terminal .a-fg-34 {
+    color: #7fb3e8;
+}
+
+.terminal .a-fg-35 {
+    color: #d6a4e8;
+}
+
+.terminal .a-fg-36 {
+    color: #7ed3d8;
+}
+
+.terminal .a-fg-37 {
+    color: #ececef;
+}
+
+.terminal .a-fg-90 {
+    color: #89888d;
+}
+
+.terminal .a-fg-91 {
+    color: #fca4a0;
+}
+
+.terminal .a-fg-92 {
+    color: #b6e6c2;
+}
+
+.terminal .a-fg-93 {
+    color: #f5d99a;
+}
+
+.terminal .a-fg-94 {
+    color: #a6cdf2;
+}
+
+.terminal .a-fg-95 {
+    color: #e5c1f2;
+}
+
+.terminal .a-fg-96 {
+    color: #a8e5e8;
+}
+
+.terminal .a-fg-97 {
+    color: #fff;
+}
+
+.terminal .a-bg-41 {
+    background: #8b2615;
+}
+
+.terminal .a-bg-42 {
+    background: #24663b;
+}
+
+.terminal .a-bg-43 {
+    background: #8f4700;
+}
+
+.terminal .a-bg-44 {
+    background: #0b5cad;
+}
+
+.terminal .a-bg-45 {
+    background: #653a8f;
+}
+
+.terminal .a-bg-46 {
+    background: #0f6b71;
+}
+
+.terminal .a-bg-47 {
+    background: #4a494f;
+}
+
+/* ---------- toasts ---------- */
+.toasts {
+    position: fixed;
+    bottom: 16px;
+    right: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    z-index: 30;
+}
+
+.toast {
+    max-width: 420px;
+    padding: 10px 12px;
+    border-radius: var(--radius);
+    background: var(--bg-hover);
+    border: 1px solid var(--border-strong);
+    color: var(--text);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.45);
+    font-size: 13px;
+}
+
+.toast-error {
+    background: #4a1a10;
+    border-color: var(--red);
+    color: #fbd5cd;
+}
