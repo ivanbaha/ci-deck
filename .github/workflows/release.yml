@@ -166,28 +166,28 @@ jobs:
       - name: Build the browser bundle
         run: bun run build:web
 
+      # Distinguishes "the job cannot mint an OIDC token" from "npm would not use
+      # it". Without this, both surface as an npm auth error much further along.
+      - name: Check an OIDC token can be minted
+        run: |
+          set -euo pipefail
+          if [ -z "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]; then
+            echo "::error::No OIDC token endpoint in this job — it is missing 'id-token: write'."
+            exit 1
+          fi
+          echo "OIDC token endpoint is present."
+
       - name: Publish (rehearsal)
         if: needs.verify.outputs.publishing != 'true'
         run: npm publish --dry-run --tag "${{ needs.verify.outputs.dist_tag }}"
 
-      # A trusted publisher can only be configured on a package that already
-      # exists, so the first release needs a granular NPM_TOKEN secret. Configure
-      # the trusted publisher afterwards, delete the secret, and this switches to
-      # OIDC on its own — no edit here.
+      # No NPM_TOKEN anywhere: the package exists, so publishing goes through the
+      # trusted publisher configured on npmjs.com for this repo and this workflow
+      # file. `--provenance` is passed rather than relied on — it is a no-op when
+      # npm would have attached one anyway.
       - name: Publish
         if: needs.verify.outputs.publishing == 'true'
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: |
-          set -euo pipefail
-          tag="${{ needs.verify.outputs.dist_tag }}"
-          if [ -n "${NODE_AUTH_TOKEN:-}" ]; then
-            echo "Publishing with NPM_TOKEN — bootstrap mode."
-            npm publish --provenance --tag "$tag"
-          else
-            echo "Publishing with trusted publishing (OIDC)."
-            npm publish --tag "$tag"
-          fi
+        run: npm publish --provenance --tag "${{ needs.verify.outputs.dist_tag }}"
 
   # Additive only: the notes stay exactly as you wrote them. Drop this job if you
   # would rather the release carry nothing you did not attach yourself.
