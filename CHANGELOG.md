@@ -8,6 +8,48 @@ versions may still change behaviour.
 
 ## [Unreleased]
 
+### Added
+
+- **Standalone executables.** Every release now carries one per platform — macOS, Linux
+  and Windows — each with the board's assets and the Bun runtime compiled in, so the tool
+  can be downloaded and run without installing Bun. They take the same flags, `.env`,
+  database and credential store as the package; only `--rebuild` is gone, since a single
+  file carries no `web/` to rebuild from. Build them with `bun run compile`.
+- **A `SHA256SUMS` file and build provenance** for those executables. A download can be
+  checked with `shasum -a 256 -c` and verified against the workflow that produced it with
+  `gh attestation verify` — the same claim `npm publish --provenance` makes for the
+  package.
+- **`--version`**, and the version in the startup banner. A copy that arrived by `curl`
+  has no package manager to ask what it is.
+- **A container image**, on Docker Hub as `ivbaha/ci-deck` and on GHCR as
+  `ghcr.io/ivanbaha/ci-deck`, for `linux/amd64` and `linux/arm64`. One build is pushed to
+  both, so they share a digest. It carries no dependencies beyond Bun itself, runs
+  unprivileged, keeps the watch list on a `/data` volume, and binds `0.0.0.0` inside the
+  container so a published port reaches it — publish that port on `127.0.0.1` to keep the
+  board off the network. The same command works on Docker, on Apple's `container`, and with
+  a bind-mounted host directory: the entrypoint hands the data directory to the
+  unprivileged user before dropping to it, rather than depending on a runtime that copies
+  the image's ownership onto a new volume.
+- **`--bind <address>` and `--origin <url>`.** The server still binds to `127.0.0.1` by
+  default, but it no longer has to: `--bind` puts it on another address, which is what a
+  container needs, and warns at startup whenever that address is not loopback. It answers
+  to loopback and to whatever it was bound to; any other name the board is reached by — a
+  hostname, or a port something maps to a different one — is named with `--origin`. A name
+  still only gets on that list by being declared, so DNS rebinding is no more possible
+  than before.
+
+### Fixed
+
+- Opening the board at `localhost` rendered a page whose every write was then refused. The
+  host check knew that name and the origin check did not; both now read one allowlist.
+- `/assets/__proto__` and friends answered from `Object.prototype` instead of 404ing,
+  turning a missing asset into a server error. Only reachable in the standalone build.
+- A bind address that is not this machine's now says so, instead of reporting a stack trace
+  that blames the port.
+- A database that cannot be opened now names the path and the user it tried as, rather than
+  passing SQLite's "unable to open database file" along with a stack trace. A mounted volume
+  owned by someone else is the usual cause, and says nothing about SQLite.
+
 ## [0.1.0] — 2026-08-09
 
 First stable release, and the same code as `0.1.0-b1` — that pre-release existed only to

@@ -1,0 +1,23 @@
+# The build stage bundles `web/` itself, so a copy from the host would only risk
+# being the stale one.
+public/
+dist/
+node_modules/
+
+.git/
+.github/
+tests/
+
+# Local secrets and databases have no business in a build context.
+.env
+.env.*
+!example.env
+*.db
+*.db-wal
+*.db-shm
+
+*.tgz
+.*.bun-build
+.DS_Store
+.idea/
+.vscode/

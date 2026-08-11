@@ -131,6 +131,58 @@ jobs:
           path: ${{ runner.temp }}/ci-deck-*.tgz
           if-no-files-found: error
 
+  # Cross-compiled from one runner: `bun build --compile` fetches the Bun runtime
+  # for each target itself, so this needs no per-OS matrix. Rehearsals build them
+  # too — a target that stops compiling should not first appear during a release.
+  binaries:
+    name: standalone binaries
+    needs: verify
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # Both for the attestation below: it is signed with an OIDC identity.
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.release.tag_name || github.ref }}
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - run: bun install --frozen-lockfile
+
+      - name: Compile every target
+        run: bun run compile all
+
+      # These are downloaded with curl rather than installed by a package
+      # manager, so nothing checks them on the way in unless we ship the means.
+      - name: Checksums
+        working-directory: dist
+        run: |
+          set -euo pipefail
+          sha256sum ci-deck-* > SHA256SUMS
+          cat SHA256SUMS
+
+      # What `npm publish --provenance` gives the package, for the executables:
+      # a signed statement of which workflow built them, from which commit.
+      # Rehearsals skip it — an attestation is a claim about something shipped.
+      - name: Attest what built them
+        if: needs.verify.outputs.publishing == 'true'
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: dist/ci-deck-*
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: binaries
+          path: |
+            dist/ci-deck-*
+            dist/SHA256SUMS
+          if-no-files-found: error
+
   publish:
     name: publish to npm
     needs: verify
@@ -189,11 +241,125 @@ jobs:
         if: needs.verify.outputs.publishing == 'true'
         run: npm publish --provenance --tag "${{ needs.verify.outputs.dist_tag }}"
 
+  # Behind `publish` for the same reason the downloads are: an image tagged with a
+  # version that never reached npm is a version that does not exist.
+  #
+  # Both architectures are built on the one runner and nothing is emulated — see
+  # the Dockerfile for why. A rehearsal builds them and pushes nothing.
+  image:
+    name: docker image
+    needs: [verify, publish]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.release.tag_name || github.ref }}
+
+      # The runtime stage installs one package, so building the image for the
+      # architecture this runner is not needs emulation. Everything else about the
+      # build is arch-independent by design — see the Dockerfile.
+      - uses: docker/setup-qemu-action@v4
+
+      - uses: docker/setup-buildx-action@v4
+
+      # Docker Hub is the only thing here that needs a stored credential, so the
+      # release goes on without it rather than failing: no DOCKERHUB_TOKEN means
+      # GHCR only. Secrets cannot be read in an `if:`, hence the indirection.
+      - name: Is Docker Hub configured?
+        id: hub
+        env:
+          TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: echo "configured=${TOKEN:+true}" >> "$GITHUB_OUTPUT"
+
+      - name: Work out the names and tags
+        id: tags
+        env:
+          HUB_USER: ${{ vars.DOCKERHUB_USERNAME }}
+        run: |
+          set -euo pipefail
+          version="${{ needs.verify.outputs.version }}"
+
+          # Both registries take lowercase names only.
+          lower() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]'; }
+          ghcr="ghcr.io/$(lower "$GITHUB_REPOSITORY")"
+          hub="docker.io/$(lower "$HUB_USER")/ci-deck"
+
+          names="$ghcr"
+          if [ "${{ steps.hub.outputs.configured }}" = "true" ]; then
+            names="$names $hub"
+          fi
+
+          # `latest` follows the npm dist-tag, so a pre-release never becomes it.
+          tags=""
+          for name in $names; do
+            tags="${tags}${name}:${version},"
+            if [ "${{ needs.verify.outputs.dist_tag }}" = "latest" ]; then
+              tags="${tags}${name}:latest,"
+            fi
+          done
+
+          echo "ghcr=$ghcr" >> "$GITHUB_OUTPUT"
+          echo "hub=$hub" >> "$GITHUB_OUTPUT"
+          echo "tags=${tags%,}" >> "$GITHUB_OUTPUT"
+          echo "Tagging: ${tags%,}"
+
+      - name: Sign in to GHCR
+        if: needs.verify.outputs.publishing == 'true'
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - name: Sign in to Docker Hub
+        if: needs.verify.outputs.publishing == 'true' && steps.hub.outputs.configured == 'true'
+        uses: docker/login-action@v4
+        with:
+          username: ${{ vars.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      # One build, pushed to both registries, so the two carry the same digest
+      # rather than two images that merely came from the same commit.
+      - name: Build, and push when this is a release
+        id: build
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: ${{ needs.verify.outputs.publishing == 'true' }}
+          tags: ${{ steps.tags.outputs.tags }}
+
+      # Attested per name, because the name is part of what is being claimed. Only
+      # the GHCR copy carries its attestation in the registry: GitHub's own store
+      # answers for both, and it is the one `gh attestation verify` reads.
+      - name: Attest the GHCR image
+        if: needs.verify.outputs.publishing == 'true'
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-name: ${{ steps.tags.outputs.ghcr }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true
+
+      - name: Attest the Docker Hub image
+        if: needs.verify.outputs.publishing == 'true' && steps.hub.outputs.configured == 'true'
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-name: ${{ steps.tags.outputs.hub }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+
   # Additive only: the notes stay exactly as you wrote them. Drop this job if you
   # would rather the release carry nothing you did not attach yourself.
-  attach-tarball:
-    name: attach tarball
-    needs: [verify, publish]
+  #
+  # The binaries wait on `publish` as well, so a release never offers downloads
+  # for a version that never reached npm.
+  attach:
+    name: attach downloads
+    needs: [verify, publish, binaries]
     if: needs.verify.outputs.publishing == 'true'
     runs-on: ubuntu-latest
     permissions:
@@ -204,7 +370,15 @@ jobs:
           name: tarball
           path: dist
 
-      - name: Upload it to the release
+      - uses: actions/download-artifact@v8
+        with:
+          name: binaries
+          path: dist
+
+      - name: Upload them to the release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release upload "$GITHUB_REF_NAME" dist/*.tgz --clobber --repo "$GITHUB_REPOSITORY"
+        run: |
+          set -euo pipefail
+          ls -l dist
+          gh release upload "$GITHUB_REF_NAME" dist/* --clobber --repo "$GITHUB_REPOSITORY"

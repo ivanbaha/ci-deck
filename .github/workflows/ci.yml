@@ -71,6 +71,145 @@ jobs:
           echo "server did not come up" >&2
           exit 1
 
+  # The whole promise of the binary is "no Bun, no source tree", and the ways it
+  # can break are invisible from a checkout: an asset that failed to embed, or
+  # one served with a content type that `nosniff` then refuses.
+  binary:
+    name: standalone binary
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - run: bun install --frozen-lockfile
+
+      - name: Compile for this machine
+        run: bun run compile
+
+      - name: Run it with no Bun and no checkout, and check it serves the board
+        run: |
+          set -euo pipefail
+          cp dist/ci-deck-* "$RUNNER_TEMP/ci-deck"
+          cd "$RUNNER_TEMP"
+
+          # A PATH without Bun on it: the executable is meant to be the runtime.
+          env -i PATH=/usr/bin:/bin HOME="$HOME" ./ci-deck \
+            --db "$RUNNER_TEMP/ci-deck.db" --port 8789 &
+
+          for _ in $(seq 1 30); do
+            curl -fsS http://127.0.0.1:8789/api/state > /dev/null && break
+            sleep 1
+          done
+
+          served() {
+            local type
+            type="$(curl -fsS -o /dev/null -w '%{content_type}' "http://127.0.0.1:8789$1")"
+            case "$type" in
+              *"$2"*) echo "  $1 → $type" ;;
+              *) echo "::error::$1 was served as '$type', expected $2"; exit 1 ;;
+            esac
+          }
+
+          served /                     text/html
+          served /assets/main.js       javascript
+          served /assets/app.css       text/css
+          served /assets/favicon.svg   image/svg
+          served /api/state            application/json
+
+  # Everything specific to the container is here: a published port reaches the
+  # board only because it binds 0.0.0.0, writes work only because the guard
+  # answers to `localhost` on the port it serves, and the watch list survives
+  # only if the volume is writable by the unprivileged user.
+  image:
+    name: docker image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: docker/setup-buildx-action@v4
+
+      - name: Build
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          load: true
+          tags: ci-deck:ci
+          # This runner's own architecture, so nothing is emulated here. The
+          # release builds both, which is where QEMU comes in.
+          platforms: linux/amd64
+
+      - name: Run it the way the README says to
+        run: |
+          set -euo pipefail
+          docker run -d --name deck -p 127.0.0.1:8787:8787 -v deck-data:/data ci-deck:ci
+
+          for _ in $(seq 1 30); do
+            curl -fsS http://127.0.0.1:8787/api/state > /dev/null && break
+            sleep 1
+          done
+
+          served() {
+            local type
+            type="$(curl -fsS -o /dev/null -w '%{content_type}' "http://127.0.0.1:8787$1")"
+            case "$type" in
+              *"$2"*) echo "  $1 → $type" ;;
+              *) echo "::error::$1 was served as '$type', expected $2"; exit 1 ;;
+            esac
+          }
+
+          served /               text/html
+          served /assets/main.js javascript
+          served /api/state      application/json
+
+          # 404 means the guard let it through to a handler; 403 means it did not.
+          # A browser on the host says `localhost`, so that spelling is the one
+          # that matters here.
+          wrote() {
+            local code
+            code="$(curl -sS -o /dev/null -w '%{http_code}' -X DELETE \
+              -H "Host: $1" -H "Origin: http://$1" http://127.0.0.1:8787/api/repos/nope)"
+            if [ "$code" != "$2" ]; then
+              echo "::error::write as $1 answered $code, expected $2"; exit 1
+            fi
+            echo "  write as $1 → $code"
+          }
+
+          wrote localhost:8787   404
+          wrote 127.0.0.1:8787   404
+          wrote evil.example:8787 403
+
+      # PID 1, not `id -u`: the entrypoint starts as root to hand over the data
+      # directory and drops before exec'ing the server, so the server's own uid is
+      # the one that matters — and the one a bug here would quietly change.
+      - name: Check the server is unprivileged and its state is on the volume
+        run: |
+          set -euo pipefail
+          uid="$(docker exec deck awk '/^Uid:/{print $2}' /proc/1/status)"
+          if [ "$uid" = "0" ]; then echo "::error::the server runs as root"; exit 1; fi
+          echo "  server runs as uid $uid"
+
+          docker exec deck test -s /data/ci-deck.db
+          echo "  the database is on the volume"
+
+      # `docker stop` sends SIGTERM. Exit code 137 would mean it ignored it and
+      # was killed ten seconds later, taking a live SQLite handle with it.
+      - name: Check it shuts down when asked
+        run: |
+          set -euo pipefail
+          docker stop -t 10 deck > /dev/null
+          code="$(docker inspect -f '{{.State.ExitCode}}' deck)"
+          if [ "$code" != "0" ]; then
+            echo "::error::container exited with $code after SIGTERM"; exit 1
+          fi
+          echo "  clean exit"
+
+      - name: What it logged
+        if: always()
+        run: docker logs deck
+
   package:
     name: package contents
     runs-on: ubuntu-latest

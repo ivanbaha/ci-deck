@@ -22,9 +22,143 @@ any GitLab project URL.
 
 ## Requirements
 
-- Bun 1.2.3 or newer — that is where `Bun.serve`'s router landed. Nothing else.
+- Bun 1.2.3 or newer — that is where `Bun.serve`'s router landed. Nothing else. Or no Bun
+  at all, if you take the standalone build or the container below.
 - A GitLab personal access token with the **`api`** scope. `read_api` is not enough,
   because CI Deck retries and cancels jobs.
+
+## Running it without Bun
+
+Every release carries a standalone executable: the board and the Bun runtime in one file,
+with nothing to install.
+
+| Platform | Asset |
+| --- | --- |
+| macOS, Apple silicon | `ci-deck-darwin-arm64` |
+| macOS, Intel | `ci-deck-darwin-x64` |
+| Linux, x86-64 | `ci-deck-linux-x64` |
+| Linux, ARM64 | `ci-deck-linux-arm64` |
+| Windows, x86-64 | `ci-deck-windows-x64.exe` |
+
+```bash
+curl -fL -o ci-deck https://github.com/ivanbaha/ci-deck/releases/latest/download/ci-deck-darwin-arm64
+chmod +x ci-deck
+./ci-deck
+```
+
+It behaves exactly like the installed command — same flags, same `.env`, same per-user
+database, same credential store — minus `--rebuild`, which needs the `web/` sources that a
+single file does not carry. `ci-deck --version` says which one you have, since there is no
+package manager here to ask.
+
+Nothing checks a file downloaded with `curl` on the way in, so each release also carries a
+`SHA256SUMS`, and every executable is attested with build provenance — a signed record of
+the workflow and commit that produced it:
+
+```bash
+shasum -a 256 -c SHA256SUMS --ignore-missing     # sha256sum -c … on Linux
+gh attestation verify ci-deck-darwin-arm64 --repo ivanbaha/ci-deck
+```
+
+Two things to know. The files are 60–120 MB, because each one is a whole runtime. And
+they are not code-signed, so macOS quarantines anything downloaded with a browser:
+
+```bash
+xattr -d com.apple.quarantine ci-deck
+```
+
+The Linux builds link against glibc, which covers the mainstream distributions; on Alpine,
+install Bun and use the package.
+
+## Running it in Docker
+
+```bash
+docker run -p 127.0.0.1:8787:8787 -v ci-deck:/data ivbaha/ci-deck
+# → http://localhost:8787
+```
+
+Every release publishes `linux/amd64` and `linux/arm64` to both Docker Hub and GHCR, tagged
+with the version and — for stable releases — `latest`. One build goes to both, so
+`ghcr.io/ivanbaha/ci-deck` is the same image by digest, not merely the same source; reach for
+it when Docker Hub's anonymous pull limits get in the way. Either can be checked against the
+workflow that built it:
+
+```bash
+gh attestation verify oci://ivbaha/ci-deck:latest --repo ivanbaha/ci-deck
+```
+
+Or with Compose:
+
+```yaml
+services:
+  ci-deck:
+    image: ivbaha/ci-deck
+    ports: ['127.0.0.1:8787:8787']
+    volumes: ['ci-deck:/data']
+    restart: unless-stopped
+
+volumes:
+  ci-deck:
+```
+
+Three things are worth understanding about that command.
+
+**It binds `0.0.0.0` inside the container**, because a container's loopback belongs to the
+container and a published port would otherwise reach nothing. What keeps the board off your
+network is the `127.0.0.1:` in front of the port mapping. Drop that prefix and anything that
+can reach your machine can reach the board, with no authentication in front of it.
+
+**The watch list, settings and token live in `/data`** — give it a volume or they go when
+the container does.
+
+**A different host port needs one more flag.** The board is reached at whatever name and
+port your browser uses, and the server only answers to names it knows about:
+
+```bash
+docker run -p 127.0.0.1:9000:8787 -v ci-deck:/data ivbaha/ci-deck \
+  --origin http://localhost:9000
+```
+
+Everything after the image name is passed to CI Deck, so any flag from the CLI section works
+there — including a second `--bind`, which overrides the built-in one.
+
+### Apple's `container`, and other runtimes
+
+It is an ordinary multi-arch OCI image, so anything that runs Linux containers runs it. On
+Apple's `container` the same command works, volume and all:
+
+```bash
+container run -d -p 127.0.0.1:8787:8787 -v ci-deck:/data ivbaha/ci-deck
+```
+
+Reach it through the published port rather than the container's own IP. The IP is not a name
+the server answers to, and it is assigned when the container starts, so declaring it with
+`--origin` means starting twice to learn it.
+
+The server runs unprivileged wherever it runs. The container starts as root only long enough
+to give the data directory to that user, and drops before the server is even executed —
+volumes arrive owned by root on some runtimes and by the image's user on others, and this
+way neither needs a flag from you.
+
+Windows containers are a different thing entirely — they run the Windows kernel and need a
+Windows base image. This image is not one, and does not need to be: Docker Desktop on Windows
+runs Linux containers, which is what everyone means by "Docker on Windows".
+
+### The token in a container
+
+Linux has no OS credential store CI Deck can use, so a token entered in the UI sits in the
+database in plain text on that volume, and the UI tells you so. To keep it out of the
+database entirely, hand it in instead — a token from the environment is used as-is and never
+written:
+
+```bash
+docker run -p 127.0.0.1:8787:8787 -v ci-deck:/data \
+  -e GITLAB_BASE_URL=https://gitlab.com/ -e GITLAB_PAT=glpat-… \
+  ivbaha/ci-deck
+```
+
+That moves it from the volume into your shell history and `docker inspect` output, which is
+a different trade rather than a strictly better one. Compose's `env_file` avoids both.
 
 ## Installing it globally
 
@@ -146,9 +280,29 @@ ci-deck [options]
 --env <path>      env file to read, if present (default: ./.env)
 --db <path>       SQLite database (default: per-user data directory)
 --port <number>   HTTP port (default: 8787)
---rebuild         rebuild the browser bundle before starting
+--bind <address>  address to listen on (default: 127.0.0.1)
+--origin <url>    another origin the board is reached by; repeatable
 -h, --help
+-v, --version
+--rebuild         rebuild the browser bundle before starting
 ```
+
+`--rebuild` is the one flag the standalone executable does not take: it has no `web/` to
+rebuild from.
+
+### Reaching it by another name
+
+The server answers only to names it knows: the three spellings of loopback on its port,
+plus the address given to `--bind`. Reach it by any other name — a hostname, or a port
+that a container or proxy maps to a different one — and every request is rejected before
+it reaches a handler. Name it and it works:
+
+```bash
+ci-deck --bind 0.0.0.0 --origin http://ci-deck.example:8787
+```
+
+That is the whole story behind the rejection, and it is deliberate: the check is what stops
+a page whose DNS was rebound to your loopback from acting as your GitLab session.
 
 ## Where state lives
 
@@ -239,17 +393,20 @@ Read this before sharing the tool.
   credential store. Everywhere else it sits in the database in plain text and the UI tells
   you so, because encrypting it with a key the app can derive on its own would be
   obfuscation, not protection. The data directory is `0700` where file modes apply.
-- **Loopback only.** It binds to `127.0.0.1` and there is no flag to change that. There is
-  no authentication, so exposing it on a shared interface would hand your GitLab access to
-  the network.
+- **Loopback by default.** It binds to `127.0.0.1`. `--bind` will put it on another
+  address — which is what containers need — and says so loudly at startup, because there is
+  no authentication: anything that can reach the port can retry and cancel pipelines as
+  you. Where you point it is your call; the default is the safe one.
 - **Cross-site writes are blocked.** Loopback binding does not stop a web page you have
   open from posting to `127.0.0.1`, so `POST`/`PUT`/`PATCH`/`DELETE` are rejected when the
   request carries a foreign `Origin` or a cross-site `Sec-Fetch-Site`. Header-less clients
   such as `curl` still work.
-- **Only its own address is answered.** A site whose DNS is rebound to `127.0.0.1` looks
-  same-origin to the browser, which sends no `Origin` at all — so every request must also
-  be addressed to `127.0.0.1`, `localhost` or `[::1]` on the right port. Anything else is
-  rejected before it reaches a handler, whatever the method.
+- **Only names it was told about are answered.** A site whose DNS is rebound to `127.0.0.1`
+  looks same-origin to the browser, which sends no `Origin` at all — so every request must
+  also be addressed to a name this server answers to: `127.0.0.1`, `localhost` or `[::1]`
+  on the right port, plus whatever `--bind` and `--origin` named. Anything else is rejected
+  before it reaches a handler, whatever the method. A rebound name never gets on that list,
+  because names arrive by being declared, never by resolving here.
 - **The saved token only goes to the host it was saved for.** Changing the GitLab URL asks
   for that instance's token instead of forwarding the stored one, so no single request can
   make CI Deck present your PAT somewhere new.

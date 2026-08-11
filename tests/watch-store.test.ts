@@ -8,6 +8,7 @@ import {
     MAX_POLL_SECONDS,
     MIN_POLL_SECONDS,
     parseExportFile,
+    StoreError,
     WatchStore,
 } from '../src/store/watch-store.ts';
 
@@ -20,6 +21,19 @@ const repo = (name: string, projectId: number) => ({
     group: 'group',
     baseUrl: HOST,
     webUrl: `${HOST}group/${name}`,
+});
+
+describe('WatchStore.open', () => {
+    // The container case, where a mounted volume belongs to another user, arrives
+    // as SQLite's "unable to open database file" and explains nothing.
+    it('says what could not be opened rather than passing SQLite along', async () => {
+        const dir = await mkdtemp(join(tmpdir(), 'ci-deck-open-'));
+        const notADirectory = join(dir, 'file');
+        await Bun.write(notADirectory, 'x');
+
+        expect(() => WatchStore.open(join(notADirectory, 'ci-deck.db'))).toThrow(StoreError);
+        expect(() => WatchStore.open(join(notADirectory, 'ci-deck.db'))).toThrow(/Cannot open the database at/);
+    });
 });
 
 describe('WatchStore defaults', () => {

@@ -9,6 +9,9 @@ import { EXPORT_VERSION, type ExportFile, normaliseTags } from '../shared/watchl
 export { EXPORT_VERSION, normaliseTags, parseExportFile, parseExportTags } from '../shared/watchlist.ts';
 export type { ExportedRepo, ExportFile } from '../shared/watchlist.ts';
 
+/** The database could not be opened — which is fatal, and rarely SQLite's fault. */
+export class StoreError extends Error { }
+
 /** A stored settings value that should be a JSON array of tag names. */
 function parseStoredTags(raw: string | undefined): string[] {
     if (!raw) return [];
@@ -180,22 +183,35 @@ export class WatchStore {
     }
 
     static open(path: string): WatchStore {
-        if (path !== ':memory:') {
-            const dir = dirname(path);
-            mkdirSync(dir, { recursive: true });
-            // The token can live here; keep the directory to the owner where modes apply.
-            // Windows relies on the default ACL of %LOCALAPPDATA% instead.
-            if (process.platform !== 'win32') {
-                try {
-                    chmodSync(dir, 0o700);
-                } catch {
-                    // Not fatal: an unusual filesystem should not stop the app.
+        try {
+            if (path !== ':memory:') {
+                const dir = dirname(path);
+                mkdirSync(dir, { recursive: true });
+                // The token can live here; keep the directory to the owner where modes apply.
+                // Windows relies on the default ACL of %LOCALAPPDATA% instead.
+                if (process.platform !== 'win32') {
+                    try {
+                        chmodSync(dir, 0o700);
+                    } catch {
+                        // Not fatal: an unusual filesystem should not stop the app.
+                    }
                 }
             }
+            const db = new Database(path, { create: true });
+            db.exec('PRAGMA journal_mode = WAL;');
+            return new WatchStore(db, path);
+        } catch (error) {
+            // SQLite says "unable to open database file" and leaves you to guess
+            // which of the several reasons it was. A mounted volume owned by
+            // someone else is the usual one, and says nothing about SQLite at all.
+            const reason = error instanceof Error ? error.message : String(error);
+            const asUser = process.getuid ? ` It runs as uid ${process.getuid()}.` : '';
+            throw new StoreError(
+                `Cannot open the database at ${path} — ${reason}\n\n`
+                + `It has to sit in a directory this process can write to.${asUser}`,
+                { cause: error },
+            );
         }
-        const db = new Database(path, { create: true });
-        db.exec('PRAGMA journal_mode = WAL;');
-        return new WatchStore(db, path);
     }
 
     static memory(): WatchStore {

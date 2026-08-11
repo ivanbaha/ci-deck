@@ -1,4 +1,3 @@
-import { resolve } from 'node:path';
 import { EnvError } from '../config/env.ts';
 import { ConfigureError, type Runtime } from '../core/runtime.ts';
 import { RepoResolutionError, resolveNewRepo } from '../core/resolver.ts';
@@ -6,18 +5,16 @@ import { repoViewFromRecord } from '../core/state.ts';
 import { describeError, isAuthError } from '../gitlab/errors.ts';
 import type { Settings } from '../shared/types.ts';
 import { parseExportFile, parseExportTags, type ExportedRepo, type WatchStore } from '../store/watch-store.ts';
-import { checkRequestOrigin } from './guard.ts';
+import type { Assets } from './assets.ts';
+import { checkRequestOrigin, type AllowedOrigins } from './guard.ts';
 import { eventStream } from './sse.ts';
 
 export interface AppDeps {
     runtime: Runtime;
     watchStore: WatchStore;
-    publicDir: string;
-    selfOrigin: string;
+    assets: Assets;
+    origins: AllowedOrigins;
 }
-
-/** `main.js`, `main.js.map`, `app.css` — a bare `.` or `..` is not a name. */
-const ASSET_NAME = /^[\w-]+(?:\.[\w-]+)+$/;
 
 /**
  * The board and the GitLab job logs it renders share an origin with the control
@@ -68,7 +65,7 @@ function statusFor(error: unknown): number {
 /** Wraps a handler with the origin guard and error-to-status mapping. */
 function route(deps: AppDeps, handler: Handler): Handler {
     return async (request) => {
-        const guard = checkRequestOrigin(request, deps.selfOrigin);
+        const guard = checkRequestOrigin(request, deps.origins);
         if (!guard.ok) return json({ error: guard.reason }, 403);
 
         try {
@@ -80,7 +77,7 @@ function route(deps: AppDeps, handler: Handler): Handler {
 }
 
 export function createServeOptions(deps: AppDeps) {
-    const { runtime, watchStore, publicDir } = deps;
+    const { runtime, watchStore, assets } = deps;
     const store = runtime.appStore;
 
     const params = (request: Request & { params?: Record<string, string> }) => request.params ?? {};
@@ -160,7 +157,7 @@ export function createServeOptions(deps: AppDeps) {
     };
 
     const indexResponse = () =>
-        new Response(Bun.file(resolve(publicDir, 'index.html')), {
+        new Response(assets.index(), {
             headers: {
                 ...SECURITY_HEADERS,
                 'Content-Type': 'text/html; charset=utf-8',
@@ -174,13 +171,8 @@ export function createServeOptions(deps: AppDeps) {
             '/': route(deps, () => indexResponse()),
 
             '/assets/:file': route(deps, async (request) => {
-                const name = params(request).file ?? '';
-                if (!ASSET_NAME.test(name)) throw new HttpError(404, 'Not found');
-
-                // Bun turns a missing or non-regular file into a 500 with the
-                // absolute path in it; a 404 is both truer and quieter.
-                const file = Bun.file(resolve(publicDir, 'assets', name));
-                if (!(await file.exists())) throw new HttpError(404, 'Not found');
+                const file = await assets.asset(params(request).file ?? '');
+                if (!file) throw new HttpError(404, 'Not found');
 
                 return new Response(file, {
                     headers: { ...SECURITY_HEADERS, 'Cache-Control': 'no-store' },

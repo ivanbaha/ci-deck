@@ -3,6 +3,11 @@ node_modules/
 # Built by `bun run build:web`, and again by prepack before publishing.
 public/
 
+# Standalone executables from `bun run compile`, and the copies `bun build
+# --compile` stages beside them if it is interrupted.
+dist/
+.*.bun-build
+
 # Local secrets — example.env is the committed template.
 .env
 .env.*
