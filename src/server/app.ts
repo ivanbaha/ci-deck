@@ -1,10 +1,16 @@
 import { EnvError } from '../config/env.ts';
 import { ConfigureError, type Runtime } from '../core/runtime.ts';
-import { RepoResolutionError, resolveNewRepo } from '../core/resolver.ts';
+import { normalizeRepoInput, RepoResolutionError, resolveNewRepo } from '../core/resolver.ts';
 import { repoViewFromRecord } from '../core/state.ts';
-import { describeError, isAuthError } from '../gitlab/errors.ts';
+import { describeError, GitLabRequestError, isAuthError } from '../gitlab/errors.ts';
 import type { Settings } from '../shared/types.ts';
-import { parseExportFile, parseExportTags, type ExportedRepo, type WatchStore } from '../store/watch-store.ts';
+import {
+    parseExportFile,
+    parseExportSettings,
+    parseExportTags,
+    type ExportedRepo,
+    type WatchStore,
+} from '../store/watch-store.ts';
 import type { Assets } from './assets.ts';
 import { checkRequestOrigin, type AllowedOrigins } from './guard.ts';
 import { eventStream } from './sse.ts';
@@ -38,6 +44,9 @@ const SECURITY_HEADERS = {
     'Referrer-Policy': 'no-referrer',
 };
 
+/** Well past any real watch list, and short of a file that would hold the server. */
+export const MAX_IMPORT_REPOS = 500;
+
 export class HttpError extends Error {
     readonly status: number;
 
@@ -59,7 +68,11 @@ function statusFor(error: unknown): number {
     if (error instanceof ConfigureError) return 409;
     // GitLab refused the token we hold, rather than us failing to reach it.
     if (isAuthError(error)) return 401;
-    return 502;
+    // Only an upstream failure is a gateway failure. Everything left — a losing
+    // side of a race on the watch list, a database that will not write — happened
+    // here, and blaming GitLab for it sends the reader to the wrong logs.
+    if (error instanceof GitLabRequestError) return 502;
+    return 500;
 }
 
 /** Wraps a handler with the origin guard and error-to-status mapping. */
@@ -141,7 +154,10 @@ export function createServeOptions(deps: AppDeps) {
             ? {
                 name: entry.name,
                 projectId: entry.projectId!,
-                path: entry.path ?? null,
+                // Through the same normaliser the other branch resolves with, so a
+                // file cannot store an absolute URL as a project path — which is
+                // what a row's own links are then built from.
+                path: entry.path ? normalizeRepoInput(entry.path) || null : null,
                 ref: entry.ref,
                 group: entry.group,
             }
@@ -203,6 +219,7 @@ export function createServeOptions(deps: AppDeps) {
                 PUT: route(deps, async (request) => {
                     const body = await readJson<{
                         pollPeriodSeconds?: number;
+                        defaultRef?: string;
                         activeTags?: string[];
                         scopeSweepToTags?: boolean;
                     }>(request);
@@ -214,6 +231,16 @@ export function createServeOptions(deps: AppDeps) {
                             throw new HttpError(400, 'pollPeriodSeconds must be a number');
                         }
                         patch.pollPeriodSeconds = watchStore.setPollPeriod(body.pollPeriodSeconds);
+                    }
+
+                    // The branch a repo added without one is watched on. It reaches
+                    // the board through the add dialog and travels in an export, so
+                    // it needs a way in that is not editing the database by hand.
+                    if (body.defaultRef !== undefined) {
+                        if (typeof body.defaultRef !== 'string' || !body.defaultRef.trim()) {
+                            throw new HttpError(400, 'defaultRef must be a branch name');
+                        }
+                        patch.defaultRef = watchStore.setDefaultRef(body.defaultRef);
                     }
 
                     // The board's tag filter lives on the server because the sweep
@@ -344,6 +371,18 @@ export function createServeOptions(deps: AppDeps) {
 
             '/api/sweep': {
                 POST: route(deps, () => {
+                    // `activePoller` only answers for whether one exists. One that
+                    // stopped on a rejected token is still there and still ignores
+                    // `trigger`, so saying "started" would be a straight untruth.
+                    if (!runtime.configured) {
+                        throw new ConfigureError('GitLab credentials are not configured yet');
+                    }
+                    if (!runtime.polling) {
+                        throw new HttpError(
+                            409,
+                            'Polling has stopped — reconnect to GitLab before asking for a sweep',
+                        );
+                    }
                     runtime.activePoller.trigger();
                     return json({ started: true });
                 }),
@@ -493,10 +532,33 @@ export function createServeOptions(deps: AppDeps) {
                     const payload = await readJson<unknown>(request);
                     const entries = parseExportFile(payload);
                     if (entries.length === 0) throw new HttpError(400, 'No repos found in the file');
+                    // Each unknown entry costs a GitLab round trip, walked in order
+                    // while this request is held open. A file bigger than any real
+                    // watch list is a mistake worth naming rather than sitting through.
+                    if (entries.length > MAX_IMPORT_REPOS) {
+                        throw new HttpError(
+                            400,
+                            `That file has ${entries.length} repos; ${MAX_IMPORT_REPOS} is the most CI Deck imports at once`,
+                        );
+                    }
 
                     // Tags first, so an empty one in the file survives even when
                     // every repo carrying it was already on the board.
                     for (const tag of parseExportTags(payload)) watchStore.createTag(baseUrl, tag);
+
+                    // An export carries the board's settings, so an import applies
+                    // them — a file that says nothing about them changes nothing.
+                    // The dialog names them before any of this runs, because a poll
+                    // interval that moves on its own is a mystery, not a feature.
+                    const fromFile = parseExportSettings(payload);
+                    const settingsPatch: Partial<Settings> = {
+                        ...(fromFile.pollPeriodSeconds !== undefined
+                            ? { pollPeriodSeconds: watchStore.setPollPeriod(fromFile.pollPeriodSeconds) }
+                            : {}),
+                        ...(fromFile.defaultRef !== undefined
+                            ? { defaultRef: watchStore.setDefaultRef(fromFile.defaultRef) }
+                            : {}),
+                    };
 
                     const added: string[] = [];
                     const tagged: string[] = [];
@@ -528,8 +590,12 @@ export function createServeOptions(deps: AppDeps) {
                     }
 
                     runtime.refreshTags();
-                    if (added.length > 0) runtime.activePoller.trigger();
-                    return json({ added, tagged, skipped });
+                    const settings = Object.keys(settingsPatch).length > 0
+                        ? store.setSettings(settingsPatch)
+                        : store.getSettings();
+
+                    if (added.length > 0 && runtime.polling) runtime.activePoller.trigger();
+                    return json({ added, tagged, skipped, settings });
                 }),
             },
         },

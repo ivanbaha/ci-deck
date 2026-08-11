@@ -86,6 +86,28 @@ export function parseExportFile(raw: unknown): ExportedRepo[] {
 }
 
 /**
+ * The settings a file carries, which an import applies. Both are optional and
+ * neither is trusted to be the right type — the poll period is clamped where it
+ * is stored, the same as one typed into the board.
+ *
+ * Shared for the same reason the repo parser is: the import dialog says what a
+ * file would change before it changes it, and it must read the file the way the
+ * server will.
+ */
+export function parseExportSettings(raw: unknown): Partial<ExportFile['settings']> {
+    const source = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
+    const settings = (source.settings && typeof source.settings === 'object' ? source.settings : {}) as Record<string, unknown>;
+    const ref = typeof settings.defaultRef === 'string' ? settings.defaultRef.trim() : '';
+
+    return {
+        ...(typeof settings.pollPeriodSeconds === 'number' && Number.isFinite(settings.pollPeriodSeconds)
+            ? { pollPeriodSeconds: settings.pollPeriodSeconds }
+            : {}),
+        ...(ref ? { defaultRef: ref } : {}),
+    };
+}
+
+/**
  * Every tag the file mentions: the top-level list plus anything only a repo
  * names, so a hand-written file need not declare its tags up front.
  */

@@ -73,23 +73,3 @@ export function button(options: ButtonOptions): HTMLButtonElement {
     return element;
 }
 
-export interface LinkButtonOptions extends ButtonOptions {
-    href: string;
-    download?: string;
-    newTab?: boolean;
-}
-
-/** Same look as a button, for actions the browser must perform, e.g. a download. */
-export function linkButton(options: LinkButtonOptions): HTMLAnchorElement {
-    const element = h('a', {
-        class: classesFor(options),
-        href: options.href,
-        title: options.label,
-        'aria-label': options.label,
-        ...(options.download ? { download: options.download } : {}),
-        ...(options.newTab ? { target: '_blank', rel: 'noreferrer' } : {}),
-    });
-
-    fill(element, options);
-    return element;
-}

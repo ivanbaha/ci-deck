@@ -3,6 +3,30 @@ import type { RepoRecord } from '../store/watch-store.ts';
 
 export type Listener = (event: ServerEvent) => void;
 
+/**
+ * Where a row links to, which the board turns into `…/-/pipelines` and
+ * `…/-/commit/…`. A stored path resolves against the instance — but resolving is
+ * not the same as belonging to it: `https://elsewhere/x`, `//elsewhere/x` and
+ * `javascript:…` all survive `new URL(path, base)` and would put an attacker's
+ * link under a repo's own name. A watch list is a file people share, so the path
+ * in one is not trusted to be the relative `group/repo` it is supposed to be.
+ *
+ * Null rather than a corrected guess: a row with no link renders as plain text,
+ * which is the honest outcome for a path this instance cannot account for.
+ */
+export function projectUrl(path: string | null, gitlabBaseUrl: string): string | null {
+    if (!path) return null;
+
+    try {
+        const base = new URL(gitlabBaseUrl);
+        const resolved = new URL(path, base);
+        if (resolved.origin !== base.origin || !resolved.href.startsWith(base.href)) return null;
+        return resolved.toString().replace(/\/+$/, '');
+    } catch {
+        return null;
+    }
+}
+
 /** A freshly loaded row: known identity, nothing fetched from GitLab yet. */
 export function repoViewFromRecord(record: RepoRecord, gitlabBaseUrl: string, tags: string[] = []): RepoView {
     return {
@@ -12,7 +36,7 @@ export function repoViewFromRecord(record: RepoRecord, gitlabBaseUrl: string, ta
         projectId: record.projectId,
         ref: record.ref,
         watched: record.watched,
-        webUrl: record.path ? new URL(record.path, gitlabBaseUrl).toString().replace(/\/+$/, '') : null,
+        webUrl: projectUrl(record.path, gitlabBaseUrl),
         health: 'unknown',
         pipeline: null,
         stages: [],
@@ -172,8 +196,9 @@ export class AppStore {
         this.emit({ type: 'sweep', sweep: { ...this.sweep } });
     }
 
+    /** GitLab rejected the token, which is also the end of polling until it changes. */
     setAuthError(message: string): void {
-        this.meta = { ...this.meta, authError: message };
+        this.meta = { ...this.meta, authError: message, polling: false };
         this.emit({ type: 'auth-error', message });
     }
 }

@@ -10,6 +10,13 @@ versions may still change behaviour.
 
 ### Added
 
+- **The default branch is settable**, through `PUT /api/settings` and through an imported
+  list. It decides the branch a repo added without one is watched on, it travels in an
+  export, and until now nothing but editing the database could change it.
+- **An import applies the settings the file carries**, and the dialog names them before you
+  press the button — a refresh interval that moves on its own is a mystery, not a feature.
+  A file that says nothing about them changes nothing.
+
 - **Standalone executables.** Every release now carries one per platform — macOS, Linux
   and Windows — each with the board's assets and the Bun runtime compiled in, so the tool
   can be downloaded and run without installing Bun. They take the same flags, `.env`,
@@ -38,8 +45,38 @@ versions may still change behaviour.
   still only gets on that list by being declared, so DNS rebinding is no more possible
   than before.
 
+### Security
+
+- **An export carried every instance's repos, not the one it was taken from.** A board
+  watching an internal GitLab as well as a public one put the internal host and the paths of
+  everything on it into a file exported from the other — and an export exists to be shared.
+  It is now scoped the way its tags always were.
+- **A watch list could point a row somewhere that is not GitLab.** An imported entry's
+  `path` was stored as given, and a row's links are built from it, so an absolute URL in a
+  file put an attacker's link under a repo's own name. Paths now go through the same
+  normaliser used when a repo is added by hand, and a stored path that does not resolve to
+  somewhere on the instance renders as a row with no link at all.
+- **The token is no longer put in the process environment.** It is resolved from the
+  configuration layers and never read back off `process.env`, so exporting it only made it
+  readable in `/proc/<pid>/environ` and inheritable by the credential-store helpers this
+  process spawns. An env file now exports the `CI_DECK_*` variables only, and a token Bun
+  had already loaded from `./.env` is dropped once it has been read.
+- **Every action in the release workflow is pinned to a commit.** That job mints an OIDC
+  token npm and GHCR accept as this repository, and a tag can be repointed.
+
 ### Fixed
 
+- Asking for a sweep after GitLab rejected the token reported that one had started. Polling
+  stops for good in that state and cannot be restarted without new credentials, so the
+  request is now refused and says why. `/api/state` no longer reports such a board as
+  polling either.
+- A confirmation raised from inside a dialog closed the dialog that asked for it — deleting
+  a tag took the tag manager with it, and the answer was written back into a page that was
+  no longer there. Dialogs now stack, and Escape closes only the innermost.
+- Tab could walk out of a dialog and into the board behind it, including out of the setup
+  panel a board with no credentials cannot get past.
+- A failure of CI Deck's own was reported as `502 Bad Gateway`, which blames GitLab for it.
+  Only an upstream failure is a gateway failure now; everything else is a 500.
 - Opening the board at `localhost` rendered a page whose every write was then refused. The
   host check knew that name and the origin check did not; both now read one allowlist.
 - `/assets/__proto__` and friends answered from `Object.prototype` instead of 404ing,

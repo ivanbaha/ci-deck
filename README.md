@@ -423,7 +423,7 @@ Read this before sharing the tool.
 | `GET` | `/api/events` | SSE stream of board updates |
 | `PUT` | `/api/credentials` | `{ baseUrl?, token? }` — verified, then stored |
 | `DELETE` | `/api/credentials` | forget the stored token, keep the list |
-| `PUT` | `/api/settings` | `{ pollPeriodSeconds?, activeTags?, scopeSweepToTags? }` |
+| `PUT` | `/api/settings` | `{ pollPeriodSeconds?, defaultRef?, activeTags?, scopeSweepToTags? }` |
 | `POST` | `/api/tags` | `{ name }` — create |
 | `PUT` \| `DELETE` | `/api/tags/:name` | rename with `{ name }`, or delete |
 | `PUT` | `/api/tags/:name/repos` | `{ repos }` — set a tag's whole membership |
@@ -436,8 +436,8 @@ Read this before sharing the tool.
 | `GET` | `/api/repos/:name/jobs/:jobId/log` | raw job trace |
 | `POST` | `/api/repos/:name/jobs/:jobId/retry` \| `/cancel` \| `/play` | job actions |
 | `POST` | `/api/repos/:name/pipeline/retry` \| `/cancel` | pipeline actions |
-| `GET` | `/api/export` | download the list |
-| `POST` | `/api/import` | add repos from an uploaded list |
+| `GET` | `/api/export` | download the list, for the instance the board is on |
+| `POST` | `/api/import` | add repos from an uploaded list, and apply the settings it carries |
 
 ## Contributing
 

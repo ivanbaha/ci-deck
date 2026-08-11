@@ -13,6 +13,7 @@ import {
     readEnvFile,
     readOptionalDbPath,
     readOptionalPort,
+    scrubSecretEnv,
     unexplainedByFiles,
 } from './config/env.ts';
 import { defaultDbPath } from './config/paths.ts';
@@ -87,6 +88,9 @@ export async function start(options: StartOptions): Promise<void> {
 
     applyEnvValues(fileValues);
     const inline = unexplainedByFiles(process.env, fileValues);
+    // The layers hold the token from here on; nothing reads it off the environment,
+    // and what is not in the environment cannot be inherited or read out of it.
+    scrubSecretEnv();
 
     const runtimeSettings = (() => {
         try {

@@ -6,7 +6,7 @@ import { EXPORT_VERSION, type ExportFile, normaliseTags } from '../shared/watchl
 
 // The format itself lives in shared/ so the browser can parse a file the same
 // way; re-exported here because that is where callers already look for it.
-export { EXPORT_VERSION, normaliseTags, parseExportFile, parseExportTags } from '../shared/watchlist.ts';
+export { EXPORT_VERSION, normaliseTags, parseExportFile, parseExportSettings, parseExportTags } from '../shared/watchlist.ts';
 export type { ExportedRepo, ExportFile } from '../shared/watchlist.ts';
 
 /** The database could not be opened — which is fatal, and rarely SQLite's fault. */
@@ -31,7 +31,6 @@ export interface RepoRecord {
     position: number;
     /** GitLab instance this repo was resolved against. */
     baseUrl: string;
-    webUrl: string | null;
     /** False keeps the repo on the board but out of the periodic sweep. */
     watched: boolean;
 }
@@ -43,7 +42,6 @@ export interface NewRepo {
     ref?: string;
     group?: string;
     baseUrl?: string;
-    webUrl?: string | null;
     watched?: boolean;
 }
 
@@ -98,7 +96,6 @@ interface RepoRow {
     grp: string;
     position: number;
     base_url: string;
-    web_url: string | null;
     watched: number;
 }
 
@@ -300,7 +297,6 @@ export class WatchStore {
             group: row.grp,
             position: row.position,
             baseUrl: row.base_url,
-            webUrl: row.web_url,
             watched: row.watched === 1,
         };
     }
@@ -357,10 +353,12 @@ export class WatchStore {
             .query<{ next: number | null }, []>('SELECT MAX(position) AS next FROM repos')
             .get()?.next ?? 0) + 1;
 
+        // `web_url` is left to its default: a project's URL is derived from its path
+        // and the instance it belongs to, which cannot go stale the way a copy would.
         this.db
             .query(
-                `INSERT INTO repos (name, project_id, path, ref, grp, position, added_at, base_url, web_url, watched)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                `INSERT INTO repos (name, project_id, path, ref, grp, position, added_at, base_url, watched)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             )
             .run(
                 repo.name,
@@ -371,7 +369,6 @@ export class WatchStore {
                 nextPosition,
                 new Date().toISOString(),
                 repo.baseUrl?.trim() || this.settings.activeBaseUrl || '',
-                repo.webUrl ?? null,
                 repo.watched === false ? 0 : 1,
             );
 
@@ -562,7 +559,10 @@ export class WatchStore {
             settings: { pollPeriodSeconds, defaultRef },
             // Listed whole, so a tag nothing carries yet still travels.
             tags: this.listTags(baseUrl).map((tag) => tag.name),
-            repos: this.listRepos().map((repo) => ({
+            // Scoped like everything else here: an export is meant to be shared, and
+            // the rows of an instance this board is not pointed at — an internal host
+            // and its project paths — are nobody else's business.
+            repos: this.listReposFor(baseUrl).map((repo) => ({
                 name: repo.name,
                 projectId: repo.projectId,
                 path: repo.path,

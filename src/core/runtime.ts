@@ -82,6 +82,15 @@ export class Runtime {
         return this.clients !== null;
     }
 
+    /**
+     * Whether the sweep loop is still going. Distinct from `configured`: a token
+     * GitLab rejected stops the loop while the clients stay in place, and asking
+     * for a sweep in that state is a request nothing can honour.
+     */
+    get polling(): boolean {
+        return this.poller?.active ?? false;
+    }
+
     get baseUrl(): string | null {
         return this.resolved?.baseUrl.value ?? null;
     }
@@ -125,7 +134,7 @@ export class Runtime {
             storePath: this.watchStore.path,
             authError: this.authError,
             credentials: this.credentialsInfo(),
-            polling: this.poller !== null,
+            polling: this.polling,
         };
     }
 

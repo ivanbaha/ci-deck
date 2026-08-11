@@ -8,6 +8,11 @@ name: Release
 #
 # Note: GitHub only runs `release` workflows from the file on the default branch,
 # so changes here have to land on main before they take effect.
+#
+# Every action is pinned to a commit, with the version it was in the comment
+# beside it. This job mints an OIDC token that npm and GHCR accept as this
+# repository, so an action tag repointed at new code would be repointed at a
+# publisher. Dependabot moves the pins; a tag can move on its own.
 on:
   release:
     types: [published]
@@ -29,12 +34,12 @@ jobs:
       dist_tag: ${{ steps.version.outputs.dist_tag }}
       publishing: ${{ steps.version.outputs.publishing }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           # The release can point at any commit, so build exactly what it names.
           ref: ${{ github.event.release.tag_name || github.ref }}
 
-      - uses: oven-sh/setup-bun@v2
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
           bun-version: latest
 
@@ -125,7 +130,7 @@ jobs:
             exit 1
           fi
 
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: tarball
           path: ${{ runner.temp }}/ci-deck-*.tgz
@@ -144,11 +149,11 @@ jobs:
       id-token: write
       attestations: write
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ github.event.release.tag_name || github.ref }}
 
-      - uses: oven-sh/setup-bun@v2
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
           bun-version: latest
 
@@ -171,11 +176,11 @@ jobs:
       # Rehearsals skip it — an attestation is a claim about something shipped.
       - name: Attest what built them
         if: needs.verify.outputs.publishing == 'true'
-        uses: actions/attest-build-provenance@v4
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4
         with:
           subject-path: dist/ci-deck-*
 
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: binaries
           path: |
@@ -193,17 +198,17 @@ jobs:
       # publish attach a provenance attestation.
       id-token: write
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ github.event.release.tag_name || github.ref }}
 
       # bun builds the bundle; the npm CLI publishes, because trusted publishing
       # and provenance are npm CLI features.
-      - uses: oven-sh/setup-bun@v2
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
           bun-version: latest
 
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: 24
           registry-url: https://registry.npmjs.org
@@ -256,16 +261,16 @@ jobs:
       id-token: write
       attestations: write
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ github.event.release.tag_name || github.ref }}
 
       # The runtime stage installs one package, so building the image for the
       # architecture this runner is not needs emulation. Everything else about the
       # build is arch-independent by design — see the Dockerfile.
-      - uses: docker/setup-qemu-action@v4
+      - uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4
 
-      - uses: docker/setup-buildx-action@v4
+      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
 
       # Docker Hub is the only thing here that needs a stored credential, so the
       # release goes on without it rather than failing: no DOCKERHUB_TOKEN means
@@ -310,7 +315,7 @@ jobs:
 
       - name: Sign in to GHCR
         if: needs.verify.outputs.publishing == 'true'
-        uses: docker/login-action@v4
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -318,7 +323,7 @@ jobs:
 
       - name: Sign in to Docker Hub
         if: needs.verify.outputs.publishing == 'true' && steps.hub.outputs.configured == 'true'
-        uses: docker/login-action@v4
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
         with:
           username: ${{ vars.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
@@ -327,7 +332,7 @@ jobs:
       # rather than two images that merely came from the same commit.
       - name: Build, and push when this is a release
         id: build
-        uses: docker/build-push-action@v7
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
         with:
           context: .
           platforms: linux/amd64,linux/arm64
@@ -339,7 +344,7 @@ jobs:
       # answers for both, and it is the one `gh attestation verify` reads.
       - name: Attest the GHCR image
         if: needs.verify.outputs.publishing == 'true'
-        uses: actions/attest-build-provenance@v4
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4
         with:
           subject-name: ${{ steps.tags.outputs.ghcr }}
           subject-digest: ${{ steps.build.outputs.digest }}
@@ -347,7 +352,7 @@ jobs:
 
       - name: Attest the Docker Hub image
         if: needs.verify.outputs.publishing == 'true' && steps.hub.outputs.configured == 'true'
-        uses: actions/attest-build-provenance@v4
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4
         with:
           subject-name: ${{ steps.tags.outputs.hub }}
           subject-digest: ${{ steps.build.outputs.digest }}
@@ -365,12 +370,12 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: tarball
           path: dist
 
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: binaries
           path: dist

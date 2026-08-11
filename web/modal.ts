@@ -23,11 +23,20 @@ export interface ModalOptions {
     onClose?: () => void;
 }
 
-let active: ModalHandle | null = null;
+/**
+ * Open modals, innermost last.
+ *
+ * A stack rather than one slot: a confirmation raised from inside a dialog used
+ * to close the dialog that asked for it, which left the answer being written
+ * back into a detached tree — deleting a tag from the tag manager took the
+ * manager with it.
+ */
+const stack: ModalHandle[] = [];
+
+/** What a modal is allowed to move focus between while it is on top. */
+const FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
 export function openModal(options: ModalOptions): ModalHandle {
-    active?.close();
-
     const previousFocus = document.activeElement as HTMLElement | null;
     const titleNode = h('h2', { class: 'modal-title' });
     const body = h('div', { class: `modal-body${options.flush ? ' modal-body-flush' : ''}` });
@@ -52,18 +61,50 @@ export function openModal(options: ModalOptions): ModalHandle {
     const overlay = h('div', { class: 'overlay' }, modal);
 
     const close = () => {
-        if (active !== handle) return;
+        if (!stack.includes(handle)) return;
+        // Anything opened on top of this belongs to it, so it goes first — closing
+        // the one underneath must not leave a dialog floating over nothing.
+        while (stack[stack.length - 1] !== handle) stack[stack.length - 1]!.close();
+
+        stack.pop();
         document.removeEventListener('keydown', onKeydown);
         overlay.remove();
-        active = null;
         options.onClose?.();
         previousFocus?.focus?.();
     };
 
+    /** Tab must not walk out of a dialog and into the board behind it. */
+    const trapFocus = (event: KeyboardEvent) => {
+        const focusable = [...modal.querySelectorAll<HTMLElement>(FOCUSABLE)].filter(
+            (node) => !node.hasAttribute('hidden'),
+        );
+        if (focusable.length === 0) return;
+
+        const first = focusable[0]!;
+        const last = focusable[focusable.length - 1]!;
+        const current = document.activeElement;
+
+        if (!modal.contains(current)) {
+            event.preventDefault();
+            (event.shiftKey ? last : first).focus();
+        } else if (event.shiftKey && current === first) {
+            event.preventDefault();
+            last.focus();
+        } else if (!event.shiftKey && current === last) {
+            event.preventDefault();
+            first.focus();
+        }
+    };
+
     const onKeydown = (event: KeyboardEvent) => {
+        // Only the innermost dialog answers, or one Escape would close them all.
+        if (stack[stack.length - 1] !== handle) return;
+
         if (event.key === 'Escape' && dismissible) {
             event.stopPropagation();
             close();
+        } else if (event.key === 'Tab') {
+            trapFocus(event);
         }
     };
 
@@ -87,7 +128,7 @@ export function openModal(options: ModalOptions): ModalHandle {
     document.addEventListener('keydown', onKeydown);
 
     byId('modal-root').appendChild(overlay);
-    active = handle;
+    stack.push(handle);
     closeButton.focus();
     return handle;
 }
@@ -112,7 +153,7 @@ export function confirmDialog(options: {
             onClose: () => finish(false),
         });
 
-        modal.body.appendChild(h('p', { text: options.message, style: 'margin:0' }));
+        modal.body.appendChild(h('p', { class: 'modal-message', text: options.message }));
 
         const cancel = button({ label: 'Cancel', text: 'Cancel', onClick: () => modal.close() });
         const confirm = button({

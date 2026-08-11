@@ -16,8 +16,8 @@ The most recent release only. CI Deck is a local tool with no server side, so up
 
 ## What is in scope
 
-CI Deck runs on your machine, binds to `127.0.0.1`, and holds a GitLab personal access
-token that can act as you. Findings that matter most:
+CI Deck runs on your machine, binds to `127.0.0.1` by default, and holds a GitLab personal
+access token that can act as you. Findings that matter most:
 
 - Anything that gets the token out of the process — into a log, an API response, an export
   file, or a request to a host other than the configured GitLab instance.
@@ -36,8 +36,13 @@ These are documented design choices, not oversights — see the Security section
 [README](README.md#security):
 
 - **No authentication on the local HTTP port.** Anyone who can already reach loopback on
-  your machine is inside the trust boundary. Exposing the port to a network is not
-  possible: the bind address is fixed.
+  your machine is inside the trust boundary.
+- **A board deliberately put on a network is yours to protect.** `--bind` takes any address
+  and the container image uses it, which is what makes a published port work. CI Deck says
+  so loudly at startup and the README says it twice: there is no authentication, so
+  whatever can reach the port can act as you. Reaching an exposed board is not a finding.
+  Reaching one that was *not* exposed — anything that gets past `--bind`, or past the
+  `Host` check on a board bound to loopback — very much is.
 - **Plain-text token storage on Linux and BSD.** There is no OS credential store to use,
   and encrypting with a key the app can derive on its own is obfuscation, not protection.
   The UI says so, and the data directory is `0700`.

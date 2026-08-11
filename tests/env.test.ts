@@ -10,6 +10,7 @@ import {
     readEnvFile,
     readOptionalDbPath,
     readOptionalPort,
+    scrubSecretEnv,
     unexplainedByFiles,
     validateToken,
 } from '../src/config/env.ts';
@@ -74,21 +75,57 @@ describe('readEnvFile', () => {
 
 describe('applyEnvValues', () => {
     it('fills in a variable that is unset', () => {
-        delete process.env.CI_DECK_SAMPLE;
-        applyEnvValues({ CI_DECK_SAMPLE: 'filled' });
-        expect(readEnv('CI_DECK_SAMPLE')).toBe('filled');
+        delete process.env.CI_DECK_PORT;
+        applyEnvValues({ CI_DECK_PORT: '9001' });
+        expect(readEnv('CI_DECK_PORT')).toBe('9001');
     });
 
     it('leaves an inline value alone', () => {
-        process.env.CI_DECK_SAMPLE = 'from-shell';
-        applyEnvValues({ CI_DECK_SAMPLE: 'from-file' });
-        expect(process.env.CI_DECK_SAMPLE).toBe('from-shell');
+        process.env.CI_DECK_PORT = '9001';
+        applyEnvValues({ CI_DECK_PORT: '9002' });
+        expect(process.env.CI_DECK_PORT).toBe('9001');
     });
 
     it('treats an empty inline value as unset', () => {
-        process.env.CI_DECK_SAMPLE = '';
+        process.env.CI_DECK_PORT = '';
+        applyEnvValues({ CI_DECK_PORT: '9001' });
+        expect(process.env.CI_DECK_PORT).toBe('9001');
+    });
+
+    /**
+     * The token is resolved from the layers, never from `process.env`, so putting
+     * it there would only make it readable in `/proc/<pid>/environ` and inheritable
+     * by the credential-store helpers this process spawns.
+     */
+    it('never exports the token, whatever the file says', () => {
+        delete process.env.GITLAB_PAT;
+        applyEnvValues({ GITLAB_PAT: 'glpat-fromfile', CI_DECK_PORT: '9001' });
+
+        expect(readEnv('GITLAB_PAT')).toBeUndefined();
+        expect(readEnv('CI_DECK_PORT')).toBe('9001');
+    });
+
+    it('exports nothing a variable of ours does not name', () => {
+        delete process.env.CI_DECK_SAMPLE;
         applyEnvValues({ CI_DECK_SAMPLE: 'filled' });
-        expect(process.env.CI_DECK_SAMPLE).toBe('filled');
+        expect(readEnv('CI_DECK_SAMPLE')).toBeUndefined();
+    });
+});
+
+describe('scrubSecretEnv', () => {
+    /**
+     * Bun applies `./.env` to the process before any of our code runs, so the token
+     * can already be in the environment by the time we decline to put it there.
+     */
+    it('removes a token Bun had already loaded', () => {
+        process.env.GITLAB_PAT = 'glpat-loaded-by-bun';
+        process.env.GITLAB_BASE_URL = 'https://gitlab.example.com/';
+
+        scrubSecretEnv();
+
+        expect(readEnv('GITLAB_PAT')).toBeUndefined();
+        // The host is not a secret, and the error messages read better with it.
+        expect(readEnv('GITLAB_BASE_URL')).toBe('https://gitlab.example.com/');
     });
 });
 

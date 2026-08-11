@@ -28,6 +28,7 @@ bun run typecheck
 bun test
 bun run build:web   # bundle web/ into public/
 bun run compile     # standalone executable for this machine, into dist/
+bun run fixture     # a full board, against a GitLab that is not there
 ```
 
 `compile` takes target names — `bun run compile linux-x64 windows-x64`, or `all` for every
@@ -49,6 +50,35 @@ Adding a second `RUN` there costs nothing extra now, but keep the first stage do
 Assets are built automatically on first start and by `prepack`; `--rebuild` forces it. That
 flag is for working on `web/`: it writes into the package directory, which is fine in a
 checkout and pointless in an installed copy, where the bundle already ships built.
+
+## The fixture, for working on the UI
+
+Working on the board otherwise means pointing a checkout at a real instance and hoping
+something is red today. `bun run fixture` removes the hoping:
+
+```bash
+bun run fixture                 # board on :8790, stand-in GitLab on :8899
+bun run fixture --port 9000     # --gitlab-port moves the other one; --keep reuses the list
+```
+
+It serves the eight API endpoints the board actually calls, seeds a watch list of 38 repos
+across six namespaces into `.fixture/` — gitignored, rebuilt each run — and starts the board
+on it through `src/cli.ts`, so what you are looking at is the real entrypoint rather than a
+copy of its startup. `CI_DECK_TAGS` is on, since a fixture is exactly where to look at the
+tag interface. Ctrl-C stops both.
+
+The world comes from a fixed seed, so it is the same every run and a screenshot means
+something. Outcomes are dealt from a shuffled deck rather than drawn per repo: the spread is
+then exactly the one described in the file, instead of whatever the seed happened to give.
+Every state the board can draw is on it at once — failed, passed, running, manual, canceled,
+no pipeline, paused rows, and a stage that is amber because only an `allow_failure` job
+failed. Pipelines that are running advance on a cycle, so the board keeps moving; retry,
+cancel and play all change what the next sweep sees. Job traces carry ANSI colour, section
+markers and a progress bar redrawn with carriage returns, which is what the log viewer
+exists to handle.
+
+Nothing in `scripts/fixture.ts` ships: `src/` does not import it, and it is not in the
+published `files`.
 
 ## How the code is laid out
 

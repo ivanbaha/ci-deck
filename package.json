@@ -46,6 +46,7 @@
         "dev": "bun --watch run src/cli.ts --rebuild",
         "build:web": "bun run scripts/build-web.ts",
         "compile": "bun run scripts/compile.ts",
+        "fixture": "bun run scripts/fixture.ts",
         "prepack": "bun run scripts/build-web.ts",
         "typecheck": "tsc --noEmit",
         "test": "bun test"

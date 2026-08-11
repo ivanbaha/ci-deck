@@ -43,11 +43,39 @@ export function readEnvFile(path: string): LoadEnvResult {
     return { loaded: true, path, values: parseEnvFile(readFileSync(path, 'utf-8')) };
 }
 
+/**
+ * Variables read back off `process.env` later, and the only ones an env file is
+ * allowed to export into it.
+ *
+ * Credentials are deliberately absent. They are resolved from the layers, never
+ * from `process.env`, so exporting them buys nothing and costs the token being
+ * readable in `/proc/<pid>/environ` and inherited by every child process — the
+ * credential-store helpers among them.
+ */
+const EXPORTED_KEYS = ['CI_DECK_PORT', 'CI_DECK_DB', 'CI_DECK_TAGS'] as const;
+
+/** Names a file may set that this process must not carry in its environment. */
+const SECRET_KEYS = ['GITLAB_PAT'] as const;
+
 /** Exports file values for anything not already set, leaving inline values alone. */
 export function applyEnvValues(values: Record<string, string>): void {
-    for (const [key, value] of Object.entries(values)) {
+    for (const key of EXPORTED_KEYS) {
+        const value = values[key];
+        if (value === undefined) continue;
         if (process.env[key] === undefined || process.env[key] === '') process.env[key] = value;
     }
+}
+
+/**
+ * Drops the token from the environment once it has been captured.
+ *
+ * Bun applies `./.env` to the process before any of our code runs, so declining
+ * to export it ourselves is not enough — by then it is already there. Call this
+ * after the layers are read, and the value survives only in the layer that
+ * resolution actually uses.
+ */
+export function scrubSecretEnv(env: NodeJS.ProcessEnv = process.env): void {
+    for (const key of SECRET_KEYS) delete env[key];
 }
 
 /**

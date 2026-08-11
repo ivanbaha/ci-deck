@@ -1367,6 +1367,17 @@ a:focus-visible {
     min-height: 20px;
 }
 
+/* A paragraph sitting directly in a dialog body, which must not bring the
+ * browser's default margins with it. Here rather than on the elements
+ * themselves: these were the only two inline styles in the app. */
+.modal-body .modal-message {
+    margin: 0;
+}
+
+.modal-body .hint-block {
+    margin: 0 0 8px;
+}
+
 /* ---------- tag dialogs ---------- */
 .tag-picker {
     display: flex;

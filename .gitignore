@@ -18,6 +18,9 @@ dist/
 *.db-wal
 *.db-shm
 
+# The watch list `bun run fixture` builds itself.
+.fixture/
+
 # Packing output
 *.tgz
 

@@ -76,7 +76,6 @@ describe('WatchStore repos', () => {
             group: 'group',
             position: 1,
             baseUrl: HOST,
-            webUrl: `${HOST}group/alpha`,
             watched: true,
         });
         expect(store.has('alpha')).toBe(true);
@@ -186,6 +185,23 @@ describe('watch list sharing', () => {
                 tags: [],
             },
         ]);
+    });
+
+    /**
+     * An export is a file people hand to each other. A board that also watches an
+     * internal instance must not put that host, or the paths of everything on it,
+     * into a file exported from a public one.
+     */
+    it('exports only the instance it was asked for', () => {
+        const store = WatchStore.memory();
+        store.addRepo({ name: 'internal-thing', projectId: 1, path: 'corp/internal-thing', baseUrl: HOST });
+        store.addRepo({ name: 'public-thing', projectId: 2, path: 'me/public-thing', baseUrl: 'https://gitlab.com/' });
+
+        const payload = store.exportList('https://gitlab.com/');
+
+        expect(payload.repos.map((repo) => repo.name)).toEqual(['public-thing']);
+        expect(JSON.stringify(payload)).not.toContain('internal-thing');
+        expect(JSON.stringify(payload)).not.toContain(HOST);
     });
 
     it('never exports credentials', () => {

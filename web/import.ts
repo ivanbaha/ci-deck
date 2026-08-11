@@ -1,8 +1,8 @@
 import type { RepoView } from '../src/shared/types.ts';
-import { parseExportFile } from '../src/shared/watchlist.ts';
+import { parseExportFile, parseExportSettings } from '../src/shared/watchlist.ts';
 import { api } from './api.ts';
 import { button } from './button.ts';
-import { h } from './dom.ts';
+import { formatDuration, h } from './dom.ts';
 import { icon } from './icons.ts';
 import { openModal } from './modal.ts';
 import { toastInfo } from './toast.ts';
@@ -23,6 +23,8 @@ interface Parsed {
     names: string[];
     fresh: string[];
     known: string[];
+    /** What the file would change besides the list itself. */
+    settings: string[];
 }
 
 /**
@@ -35,11 +37,21 @@ function parse(text: string, watched: RepoView[]): Parsed {
     const names = parseExportFile(payload).map((entry) => entry.name);
     const onBoard = new Set(watched.map((repo) => repo.name));
 
+    // An import applies the settings a file carries. Said here, before the button
+    // is pressed: a refresh interval that moves on its own is a mystery.
+    const settings = parseExportSettings(payload);
+
     return {
         payload,
         names,
         fresh: names.filter((name) => !onBoard.has(name)),
         known: names.filter((name) => onBoard.has(name)),
+        settings: [
+            settings.pollPeriodSeconds !== undefined
+                ? `refresh every ${formatDuration(settings.pollPeriodSeconds)}`
+                : '',
+            settings.defaultRef !== undefined ? `default branch "${settings.defaultRef}"` : '',
+        ].filter(Boolean),
     };
 }
 
@@ -113,6 +125,9 @@ export function openImportDialog(watched: RepoView[], onImported: () => void): v
                 ? h('div', { class: 'hint', text: `${known.length} already on the board, left alone` })
                 : null,
             h('div', { class: 'hint import-names', text: fresh.slice(0, 8).join(', ') + (fresh.length > 8 ? `, and ${fresh.length - 8} more` : '') }),
+            parsed.settings.length > 0
+                ? h('div', { class: 'hint', text: `Also sets: ${parsed.settings.join(', ')}` })
+                : null,
         ].filter(Boolean) as Node[]);
 
         start.disabled = fresh.length === 0;
@@ -194,5 +209,3 @@ export function openImportDialog(watched: RepoView[], onImported: () => void): v
     modal.footer.append(template, h('span', { class: 'spacer' }), browse, cancel, start);
     drop.focus();
 }
-
-export { parse as parseImportPreview };

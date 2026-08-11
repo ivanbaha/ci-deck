@@ -101,7 +101,7 @@ export function openSetup(credentials: CredentialsInfo, options: { dismissible: 
                     : 'Needs the "api" scope, so jobs can be retried and cancelled.',
             }),
         ),
-        h('p', { class: 'hint', text: storageNote, style: 'margin:0 0 8px' }),
+        h('p', { class: 'hint hint-block', text: storageNote }),
         error,
     );
 

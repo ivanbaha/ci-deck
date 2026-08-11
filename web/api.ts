@@ -68,6 +68,8 @@ export const api = {
             /** Already watched, but the file's tags were merged onto them. */
             tagged: string[];
             skipped: { repo: string; reason: string }[];
+            /** After applying whatever the file carried; also arrives over SSE. */
+            settings: Settings;
         }>('/api/import', 'POST', payload),
 
     removeRepo: (name: string) => request<{ removed: string }>(repoPath(name), { method: 'DELETE' }),

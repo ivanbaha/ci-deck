@@ -1,0 +1,16 @@
+version: 2
+
+# CI Deck has no runtime dependencies, so this is here for the workflows rather
+# than the package. The release workflow pins every action to a commit, which is
+# what keeps a repointed tag from reaching a job that can publish — and pinned
+# means nothing updates unless something updates it. That is this.
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    groups:
+      actions:
+        patterns: ['*']
+    commit-message:
+      prefix: 'ci'

@@ -77,6 +77,16 @@ export class Poller {
         };
     }
 
+    /**
+     * False once the loop has stopped for good. A token GitLab rejected ends it
+     * mid-sweep and nothing here can restart it — new credentials build a new
+     * poller — so callers have to be able to tell, rather than reporting a sweep
+     * they only asked for.
+     */
+    get active(): boolean {
+        return this.running && !this.aborted;
+    }
+
     start(): void {
         if (this.running) return;
         this.running = true;
