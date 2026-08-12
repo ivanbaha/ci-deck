@@ -4,7 +4,7 @@ import { GitLabRequestError } from '../src/gitlab/errors.ts';
 import type { Poller } from '../src/core/poller.ts';
 import type { Runtime } from '../src/core/runtime.ts';
 import { AppStore, repoViewFromRecord } from '../src/core/state.ts';
-import type { AppMeta, Settings } from '../src/shared/types.ts';
+import { DEFAULT_COLUMN_WIDTHS, type AppMeta, type Settings } from '../src/shared/types.ts';
 import type { Assets } from '../src/server/assets.ts';
 import { createServeOptions, MAX_IMPORT_REPOS } from '../src/server/app.ts';
 import { allowedOrigins } from '../src/server/guard.ts';
@@ -18,13 +18,14 @@ const SETTINGS: Settings = {
     pollPeriodSeconds: 120,
     retries: 5,
     defaultRef: 'main',
-    activeTags: [],
-    scopeSweepToTags: false,
+    confirmManualRun: true,
+    notifications: 'on',
+    theme: 'system',
+    columnWidths: { ...DEFAULT_COLUMN_WIDTHS },
 };
 
 function meta(): AppMeta {
     return {
-        tagsEnabled: true,
         gitlabBaseUrl: HOST_A,
         user: 'me',
         storePath: ':memory:',
@@ -71,7 +72,7 @@ function harness(options: Options = {}) {
             triggers.push(Date.now());
         },
         invalidate: () => undefined,
-        refreshRepo: async (name: string) => appStore.getRepo(name),
+        refreshRepo: async (id: number) => appStore.getRepo(id),
         get active() {
             return polling;
         },
@@ -100,9 +101,9 @@ function harness(options: Options = {}) {
         origins: allowedOrigins(PORT),
     });
 
-    /** Adds a repo to both halves of the world, the way a real add does. */
-    const seed = (name: string, projectId: number, host = baseUrl ?? HOST_A) => {
-        const record = watchStore.addRepo({ name, projectId, path: `group/${name}`, baseUrl: host });
+    /** Adds a row to both halves of the world, the way a real add does. */
+    const seed = (name: string, projectId: number, ref = 'main', host = baseUrl ?? HOST_A) => {
+        const record = watchStore.addRepo({ name, projectId, ref, path: `group/${name}`, baseUrl: host });
         if (host === baseUrl) appStore.addRepo(repoViewFromRecord(record, host));
         return record;
     };
@@ -133,8 +134,8 @@ describe('GET /api/export', () => {
      */
     it('carries only the instance the board is pointed at', async () => {
         const { served, seed } = harness({ baseUrl: HOST_B });
-        seed('public-thing', 1, HOST_B);
-        seed('internal-thing', 2, HOST_A);
+        seed('public-thing', 1, 'main', HOST_B);
+        seed('internal-thing', 2, 'main', HOST_A);
 
         const response = await served.routes['/api/export'].GET(request('/api/export'));
         const text = await response.text();
@@ -179,9 +180,34 @@ describe('POST /api/import', () => {
         );
 
         expect(response.status).toBe(200);
-        expect(await bodyOf<{ added: string[] }>(response)).toMatchObject({ added: ['payments-api'] });
-        expect(watchStore.getRepo('payments-api')?.path).toBe('payments-api');
-        expect(appStore.getRepo('payments-api')?.webUrl).toBe(`${HOST_A}payments-api`);
+        expect(await bodyOf<{ added: string[] }>(response)).toMatchObject({ added: ['payments-api · main'] });
+
+        const record = watchStore.findRepo(HOST_A, 'payments-api', 'main')!;
+        expect(record.path).toBe('payments-api');
+        expect(appStore.getRepo(record.id)?.webUrl).toBe(`${HOST_A}payments-api`);
+    });
+
+    /**
+     * A row is a repo and a branch, so the same repo twice on different branches
+     * is two rows and not a duplicate. It used to be the primary key on its own.
+     */
+    it('takes the same repo once per branch', async () => {
+        const { served, watchStore } = harness();
+
+        const response = await served.routes['/api/import'].POST(
+            jsonRequest('/api/import', 'POST', {
+                repos: [
+                    { name: 'alpha', projectId: 1, path: 'group/alpha', ref: 'main' },
+                    { name: 'alpha', projectId: 1, path: 'group/alpha', ref: 'develop' },
+                    { name: 'alpha', projectId: 1, path: 'group/alpha', ref: 'develop' },
+                ],
+            }),
+        );
+
+        const body = await bodyOf<{ added: string[]; skipped: { repo: string }[] }>(response);
+        expect(body.added).toEqual(['alpha · main', 'alpha · develop']);
+        expect(body.skipped).toHaveLength(1);
+        expect(watchStore.listReposFor(HOST_A).map((repo) => repo.ref).sort()).toEqual(['develop', 'main']);
     });
 
     it('applies the settings the file carries', async () => {
@@ -305,6 +331,90 @@ describe('PUT /api/settings', () => {
 
         expect(response.status).toBe(400);
     });
+
+    it('takes the global notification mode, and only the three it has', async () => {
+        const { served, watchStore } = harness();
+
+        const ok = await served.routes['/api/settings'].PUT(
+            jsonRequest('/api/settings', 'PUT', { notifications: 'snooze' }),
+        );
+        const bad = await served.routes['/api/settings'].PUT(
+            jsonRequest('/api/settings', 'PUT', { notifications: 'sometimes' }),
+        );
+
+        expect(ok.status).toBe(200);
+        expect(bad.status).toBe(400);
+        expect(watchStore.settings.notifications).toBe('snooze');
+    });
+
+    it('takes a column width, clamped and merged over the rest', async () => {
+        const { served, watchStore } = harness();
+
+        const response = await served.routes['/api/settings'].PUT(
+            jsonRequest('/api/settings', 'PUT', { columnWidths: { stages: 5_000 } }),
+        );
+
+        expect(response.status).toBe(200);
+        expect(watchStore.settings.columnWidths.stages).toBe(900);
+        expect(watchStore.settings.columnWidths.repo).toBe(DEFAULT_COLUMN_WIDTHS.repo);
+    });
+
+    it('takes the theme, and only the three it has', async () => {
+        const { served, watchStore } = harness();
+
+        const ok = await served.routes['/api/settings'].PUT(jsonRequest('/api/settings', 'PUT', { theme: 'light' }));
+        const bad = await served.routes['/api/settings'].PUT(jsonRequest('/api/settings', 'PUT', { theme: 'sepia' }));
+
+        expect(ok.status).toBe(200);
+        expect(bad.status).toBe(400);
+        expect(watchStore.settings.theme).toBe('light');
+    });
+
+    it('takes the manual-run confirmation switch', async () => {
+        const { served, watchStore } = harness();
+
+        const response = await served.routes['/api/settings'].PUT(
+            jsonRequest('/api/settings', 'PUT', { confirmManualRun: false }),
+        );
+
+        expect(response.status).toBe(200);
+        expect(watchStore.settings.confirmManualRun).toBe(false);
+    });
+
+    /**
+     * A sweep is a round of requests against someone's GitLab. The interval earns
+     * one because the poller works out the next wait when the last sweep ends, so
+     * shortening it would otherwise sit out the rest of the old wait. Nothing else
+     * here changes anything a pipeline could answer differently.
+     */
+    it('sweeps again when the interval changes', async () => {
+        const { served, triggers } = harness();
+
+        await served.routes['/api/settings'].PUT(
+            jsonRequest('/api/settings', 'PUT', { pollPeriodSeconds: 30 }),
+        );
+
+        expect(triggers).toHaveLength(1);
+    });
+
+    it('does not sweep for a setting that only changes how the board looks', async () => {
+        const { served, triggers } = harness();
+
+        for (const patch of [
+            { columnWidths: { stages: 420 } },
+            { theme: 'light' },
+            { notifications: 'snooze' },
+            { confirmManualRun: false },
+            { defaultRef: 'develop' },
+        ]) {
+            const response = await served.routes['/api/settings'].PUT(
+                jsonRequest('/api/settings', 'PUT', patch),
+            );
+            expect(response.status).toBe(200);
+        }
+
+        expect(triggers).toHaveLength(0);
+    });
 });
 
 describe('failures are attributed to whoever caused them', () => {
@@ -338,8 +448,8 @@ describe('failures are attributed to whoever caused them', () => {
     it('is a 404 for a repo that is not on the board', async () => {
         const { served } = harness();
 
-        const response = await served.routes['/api/repos/:name/refresh'].POST(
-            request('/api/repos/ghost/refresh', { method: 'POST' }, { name: 'ghost' }),
+        const response = await served.routes['/api/repos/:id/refresh'].POST(
+            request('/api/repos/999/refresh', { method: 'POST' }, { id: '999' }),
         );
 
         expect(response.status).toBe(404);
@@ -347,11 +457,164 @@ describe('failures are attributed to whoever caused them', () => {
 
     it('is a 400 for a job id that is not one', async () => {
         const { served, seed } = harness();
-        seed('alpha', 1);
+        const alpha = seed('alpha', 1);
 
-        const response = await served.routes['/api/repos/:name/jobs/:jobId/retry'].POST(
-            request('/api/repos/alpha/jobs/nope/retry', { method: 'POST' }, { name: 'alpha', jobId: 'nope' }),
+        const response = await served.routes['/api/repos/:id/jobs/:jobId/retry'].POST(
+            request(`/api/repos/${alpha.id}/jobs/nope/retry`, { method: 'POST' }, { id: String(alpha.id), jobId: 'nope' }),
         );
+
+        expect(response.status).toBe(400);
+    });
+});
+
+describe('PUT /api/repos/:id/notify', () => {
+    it('stores the mode and publishes it on the row', async () => {
+        const { served, seed, appStore, watchStore } = harness();
+        const alpha = seed('alpha', 1);
+
+        const response = await served.routes['/api/repos/:id/notify'].PUT(
+            jsonRequest(`/api/repos/${alpha.id}/notify`, 'PUT', { notify: 'snooze' }, { id: String(alpha.id) }),
+        );
+
+        expect(response.status).toBe(200);
+        expect(watchStore.getRepo(alpha.id)?.notify).toBe('snooze');
+        expect(appStore.getRepo(alpha.id)?.notify).toBe('snooze');
+    });
+
+    it('refuses a mode that is not one', async () => {
+        const { served, seed } = harness();
+        const alpha = seed('alpha', 1);
+
+        const response = await served.routes['/api/repos/:id/notify'].PUT(
+            jsonRequest(`/api/repos/${alpha.id}/notify`, 'PUT', { notify: 'loud' }, { id: String(alpha.id) }),
+        );
+
+        expect(response.status).toBe(400);
+    });
+});
+
+describe('POST /api/repos/:id/stage/:action', () => {
+    /** One control, one request — the browser used to fire one call per job. */
+    it('retries every failed job in the stage, allowed to fail or not', async () => {
+        const retried: number[] = [];
+        const { served, seed, appStore } = harness({
+            client: { retryJob: async (_project: number, jobId: number) => {
+                retried.push(jobId);
+                return {} as never;
+            } },
+        });
+        const alpha = seed('alpha', 1);
+
+        appStore.patchRepo(alpha.id, {
+            stages: [{
+                name: 'test',
+                status: 'failed',
+                hasManual: true,
+                hasWarning: true,
+                jobs: [
+                    { id: 1, name: 'unit', stage: 'test', status: 'failed', allowFailure: false, durationSeconds: 1, webUrl: '', startedAt: null, finishedAt: null, retriedAttempts: 0 },
+                    { id: 2, name: 'licenses', stage: 'test', status: 'failed', allowFailure: true, durationSeconds: 1, webUrl: '', startedAt: null, finishedAt: null, retriedAttempts: 0 },
+                    { id: 3, name: 'deploy', stage: 'test', status: 'manual', allowFailure: false, durationSeconds: null, webUrl: '', startedAt: null, finishedAt: null, retriedAttempts: 0 },
+                    { id: 4, name: 'lint', stage: 'test', status: 'success', allowFailure: false, durationSeconds: 1, webUrl: '', startedAt: null, finishedAt: null, retriedAttempts: 0 },
+                ],
+            }],
+        });
+
+        const response = await served.routes['/api/repos/:id/stage/:action'].POST(
+            jsonRequest(`/api/repos/${alpha.id}/stage/retry`, 'POST', { stage: 'test' }, { id: String(alpha.id), action: 'retry' }),
+        );
+
+        expect(response.status).toBe(200);
+        expect(retried.sort()).toEqual([1, 2]);
+        expect(await bodyOf<{ acted: number; failed: number }>(response)).toMatchObject({ acted: 2, failed: 0 });
+    });
+
+    it('says so rather than pretending, when nothing in the stage applies', async () => {
+        const { served, seed, appStore } = harness();
+        const alpha = seed('alpha', 1);
+
+        appStore.patchRepo(alpha.id, {
+            stages: [{ name: 'test', status: 'success', hasManual: false, hasWarning: false, jobs: [] }],
+        });
+
+        const response = await served.routes['/api/repos/:id/stage/:action'].POST(
+            jsonRequest(`/api/repos/${alpha.id}/stage/retry`, 'POST', { stage: 'test' }, { id: String(alpha.id), action: 'retry' }),
+        );
+
+        expect(response.status).toBe(409);
+    });
+
+    it('is a 404 for a stage the row does not have', async () => {
+        const { served, seed } = harness();
+        const alpha = seed('alpha', 1);
+
+        const response = await served.routes['/api/repos/:id/stage/:action'].POST(
+            jsonRequest(`/api/repos/${alpha.id}/stage/retry`, 'POST', { stage: 'ghost' }, { id: String(alpha.id), action: 'retry' }),
+        );
+
+        expect(response.status).toBe(404);
+    });
+});
+
+describe('PUT /api/focus', () => {
+    /**
+     * An ordering, not a filter. Everything watched is still swept, or narrowing
+     * the board would quietly decide which repos are allowed to notify you.
+     */
+    it('puts the rows on screen first and keeps the rest', async () => {
+        const { served, seed, appStore } = harness();
+        const alpha = seed('alpha', 1);
+        const beta = seed('beta', 2);
+        const gamma = seed('gamma', 3);
+
+        const response = await served.routes['/api/focus'].PUT(
+            jsonRequest('/api/focus', 'PUT', { repos: [gamma.id] }),
+        );
+
+        expect(response.status).toBe(200);
+        expect(appStore.sweepOrder()).toEqual([gamma.id, alpha.id, beta.id]);
+    });
+
+    it('refuses anything that is not a list of ids', async () => {
+        const { served } = harness();
+
+        const response = await served.routes['/api/focus'].PUT(
+            jsonRequest('/api/focus', 'PUT', { repos: 'alpha' }),
+        );
+
+        expect(response.status).toBe(400);
+    });
+});
+
+describe('GET /api/resolve', () => {
+    it('answers with the branches, and with what is already watched', async () => {
+        const { served, seed } = harness({
+            client: {
+                getProject: async () => ({
+                    id: 7,
+                    name: 'alpha',
+                    path_with_namespace: 'group/alpha',
+                    web_url: `${HOST_A}group/alpha`,
+                    default_branch: 'main',
+                }),
+                getBranches: async () => ['develop', 'main'],
+            },
+        });
+        seed('alpha', 7, 'develop');
+
+        const response = await served.routes['/api/resolve'].GET(request('/api/resolve?repo=group/alpha'));
+
+        expect(response.status).toBe(200);
+        const { candidate } = await bodyOf<{ candidate: { branches: string[]; watchedRefs: string[] } }>(response);
+        // The default branch leads, because all but a handful of rows want it.
+        expect(candidate.branches).toEqual(['main', 'develop']);
+        expect(candidate.watchedRefs).toEqual(['develop']);
+    });
+
+    it('refuses an empty query rather than searching for nothing', async () => {
+        const { served } = harness();
+
+        const response = await served.routes['/api/resolve'].GET(request('/api/resolve?repo=%20'));
 
         expect(response.status).toBe(400);
     });
@@ -360,15 +623,15 @@ describe('failures are attributed to whoever caused them', () => {
 describe('the guard is wired into every route', () => {
     it('refuses a request addressed to a name this server does not answer to', async () => {
         const { served, seed, watchStore } = harness();
-        seed('alpha', 1);
+        const alpha = seed('alpha', 1);
 
-        const response = await served.routes['/api/repos/:name'].DELETE(
-            request('http://evil.example:8787/api/repos/alpha', { method: 'DELETE' }, { name: 'alpha' }),
+        const response = await served.routes['/api/repos/:id'].DELETE(
+            request(`http://evil.example:8787/api/repos/${alpha.id}`, { method: 'DELETE' }, { id: String(alpha.id) }),
         );
 
         expect(response.status).toBe(403);
         // Refused before the handler ran, not after it did the work.
-        expect(watchStore.has('alpha')).toBe(true);
+        expect(watchStore.getRepo(alpha.id)).toBeDefined();
     });
 
     it('refuses a write carrying a foreign origin', async () => {

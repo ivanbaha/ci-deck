@@ -57,7 +57,9 @@ export function button(options: ButtonOptions): HTMLButtonElement {
     const element = h('button', {
         type: 'button',
         class: classesFor(options),
-        title: options.label,
+        // The board's own tooltip rather than the browser's: it arrives without
+        // the second of dead air, and a disabled control still gets one.
+        'data-tip': options.label,
         'aria-label': options.label,
         disabled: options.disabled ?? false,
         hidden: options.hidden ?? false,

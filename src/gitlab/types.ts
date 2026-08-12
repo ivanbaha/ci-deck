@@ -68,3 +68,8 @@ export interface GitLabProject {
     web_url: string;
     default_branch: string | null;
 }
+
+export interface GitLabBranch {
+    name: string;
+    default: boolean;
+}

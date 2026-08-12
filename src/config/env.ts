@@ -52,7 +52,7 @@ export function readEnvFile(path: string): LoadEnvResult {
  * readable in `/proc/<pid>/environ` and inherited by every child process — the
  * credential-store helpers among them.
  */
-const EXPORTED_KEYS = ['CI_DECK_PORT', 'CI_DECK_DB', 'CI_DECK_TAGS'] as const;
+const EXPORTED_KEYS = ['CI_DECK_PORT', 'CI_DECK_DB'] as const;
 
 /** Names a file may set that this process must not carry in its environment. */
 const SECRET_KEYS = ['GITLAB_PAT'] as const;
@@ -156,14 +156,4 @@ export function readOptionalPort(): number | null {
 
 export function readOptionalDbPath(): string | null {
     return process.env.CI_DECK_DB?.trim() || null;
-}
-
-/**
- * Tags are stored, served and exported regardless; this only decides whether the
- * board offers them. The data model is settled, the interface is not, so it ships
- * dark and can be turned on to work on it against a real watch list.
- */
-export function tagsEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
-    const raw = env.CI_DECK_TAGS?.trim().toLowerCase();
-    return raw === '1' || raw === 'true' || raw === 'on';
 }

@@ -1,3 +1,4 @@
+import { CANCELABLE_JOB_STATUSES, RETRYABLE_JOB_STATUSES } from '../src/shared/statuses.ts';
 import type { GitLabStatus, StageStatus } from '../src/shared/types.ts';
 import type { IconName } from './icons.ts';
 
@@ -84,15 +85,7 @@ export function statusClass(status: GitLabStatus | StageStatus | string): string
     return `s-${statusKind(status)}`;
 }
 
-/** Statuses where "Retry" makes sense, matching GitLab's own affordances. */
-export const RETRYABLE = new Set<string>(['failed', 'canceled', 'success', 'skipped', 'manual']);
-
-export const CANCELABLE = new Set<string>([
-    'running',
-    'pending',
-    'created',
-    'preparing',
-    'scheduled',
-    'waiting_for_resource',
-    'waiting_for_callback',
-]);
+// Defined next to the server's use of them, so a control the board offers and the
+// jobs a stage-wide action touches can never disagree about what is retryable.
+export const RETRYABLE = RETRYABLE_JOB_STATUSES;
+export const CANCELABLE = CANCELABLE_JOB_STATUSES;

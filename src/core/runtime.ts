@@ -1,4 +1,4 @@
-import { normaliseBaseUrl, tagsEnabled, validateToken } from '../config/env.ts';
+import { normaliseBaseUrl, validateToken } from '../config/env.ts';
 import { resolveCredentials, type EnvLayers, type ResolvedCredentials } from '../config/resolve.ts';
 import { Secrets } from '../config/secrets.ts';
 import { GitLabClient } from '../gitlab/client.ts';
@@ -60,8 +60,10 @@ export class Runtime {
                 pollPeriodSeconds: settings.pollPeriodSeconds,
                 retries: settings.retries,
                 defaultRef: settings.defaultRef,
-                activeTags: settings.activeTags,
-                scopeSweepToTags: settings.scopeSweepToTags,
+                confirmManualRun: settings.confirmManualRun,
+                notifications: settings.notifications,
+                theme: settings.theme,
+                columnWidths: settings.columnWidths,
             },
             this.buildMeta(),
         );
@@ -128,7 +130,6 @@ export class Runtime {
 
     private buildMeta(): AppMeta {
         return {
-            tagsEnabled: tagsEnabled(),
             gitlabBaseUrl: this.resolved?.baseUrl.value ?? null,
             user: this.username,
             storePath: this.watchStore.path,
@@ -181,7 +182,7 @@ export class Runtime {
         this.appStore.setRepos(
             this.watchStore
                 .listReposFor(baseUrl)
-                .map((record) => repoViewFromRecord(record, baseUrl, tagsByRepo.get(record.name) ?? [])),
+                .map((record) => repoViewFromRecord(record, baseUrl, tagsByRepo.get(record.id) ?? [])),
         );
         this.appStore.setTags(this.watchStore.listTags(baseUrl));
     }
@@ -211,6 +212,7 @@ export class Runtime {
             client: this.clients.sweep,
             interactiveClient: this.clients.interactive,
             store: this.appStore,
+            flags: this.watchStore,
         });
 
         this.loadRepos(baseUrl);

@@ -49,9 +49,18 @@ function latestAttempts(jobs: GitLabJob[]): { job: GitLabJob; retriedAttempts: n
     return [...byKey.values()];
 }
 
+/** A job that failed and was allowed to — why a stage is amber, not red. */
+export function isWarningJob(job: JobView): boolean {
+    return job.status === 'failed' && job.allowFailure;
+}
+
 /**
  * Worst-first precedence: an in-flight stage reads as running, a hard failure
  * outranks anything queued, and allow_failure-only failures degrade to a warning.
+ *
+ * `warning` sits above `canceled` and `manual` rather than below them, which is
+ * where it used to be. Something did fail there, and a stage that also happens to
+ * hold a manual job was calling itself manual and showing no sign of it at all.
  */
 export function aggregateStageStatus(jobs: JobView[]): StageStatus {
     if (jobs.length === 0) return 'skipped';
@@ -61,11 +70,29 @@ export function aggregateStageStatus(jobs: JobView[]): StageStatus {
     if (has((j) => RUNNING_STATUSES.has(j.status))) return 'running';
     if (has((j) => j.status === 'failed' && !j.allowFailure)) return 'failed';
     if (has((j) => PENDING_STATUSES.has(j.status))) return 'pending';
+    if (has(isWarningJob)) return 'warning';
     if (has((j) => j.status === 'canceled')) return 'canceled';
     if (has((j) => j.status === 'manual')) return 'manual';
-    if (has((j) => j.status === 'failed')) return 'warning';
     if (jobs.every((j) => j.status === 'skipped')) return 'skipped';
     return 'success';
+}
+
+/**
+ * One stage, with the two things a single bubble cannot say on its own.
+ *
+ * Whatever wins the precedence above hides everything under it, and two of those
+ * matter enough to survive: a job waiting to be started, and a job that failed
+ * while being allowed to. The bubble marks them in its corners instead of picking
+ * between them.
+ */
+export function toStageView(name: string, jobs: JobView[]): StageView {
+    return {
+        name,
+        status: aggregateStageStatus(jobs),
+        hasManual: jobs.some((job) => job.status === 'manual'),
+        hasWarning: jobs.some(isWarningJob),
+        jobs,
+    };
 }
 
 /**
@@ -89,10 +116,7 @@ export function buildStages(jobs: GitLabJob[]): StageView[] {
 
     return [...byStage.entries()]
         .sort(([a], [b]) => (stageOrder.get(a) ?? 0) - (stageOrder.get(b) ?? 0))
-        .map(([name, stageJobs]) => {
-            const ordered = stageJobs.sort((a, b) => a.name.localeCompare(b.name));
-            return { name, status: aggregateStageStatus(ordered), jobs: ordered };
-        });
+        .map(([name, stageJobs]) => toStageView(name, stageJobs.sort((a, b) => a.name.localeCompare(b.name))));
 }
 
 /** Jobs carry the commit, so the board avoids a separate commits API call. */

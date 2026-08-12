@@ -1,23 +1,86 @@
-/* Dark UI built on GitLab's Pajamas dark tokens. */
+/*
+ * Built on GitLab's Pajamas palette, in both of its directions.
+ *
+ * Every colour is one token, and every token is a `light-dark()` pair, so the two
+ * themes are written side by side and cannot drift: there is no second palette
+ * block to forget to update. The switch itself is `color-scheme` — the default
+ * follows the operating system, and `data-theme` on the root overrides it — which
+ * also carries scrollbars, form controls and the caret along with it, none of
+ * which a set of custom properties can reach.
+ */
 :root {
-    --bg: #1b1a1f;
-    --bg-raised: #232229;
-    --bg-hover: #2b2a31;
-    --bg-header: #141317;
-    --border: #3a3940;
-    --border-strong: #56545c;
-    --text: #ececef;
-    --text-muted: #a4a3a8;
-    --text-dim: #85848a;
-    --link: #79b7f0;
-    --blue: #428fdc;
-    --blue-strong: #63a6e9;
-    --green: #2da160;
-    --red: #ec5941;
-    --orange: #d99530;
+    color-scheme: light dark;
+
+    --bg: light-dark(#fff, #1b1a1f);
+    --bg-raised: light-dark(#fbfafd, #232229);
+    --bg-hover: light-dark(#ececef, #2b2a31);
+    --bg-header: light-dark(#f4f3f7, #141317);
+    --border: light-dark(#dcdcde, #3a3940);
+    --border-strong: light-dark(#bfbfc3, #56545c);
+    --text: light-dark(#28272d, #ececef);
+    --text-muted: light-dark(#535158, #a4a3a8);
+    --text-dim: light-dark(#737278, #85848a);
+    --link: light-dark(#1068bf, #79b7f0);
+    --blue: light-dark(#1068bf, #428fdc);
+    --blue-strong: light-dark(#0b5cad, #63a6e9);
+    --green: light-dark(#108548, #2da160);
+    --red: light-dark(#dd2b0e, #ec5941);
+    --orange: light-dark(#ab6100, #d99530);
+
+    /* Surfaces tinted by a status, and the flags that borrow them. */
+    --tint-success: light-dark(#ecf4ee, #14311f);
+    --tint-failed: light-dark(#fcf1ef, #3d160c);
+    --tint-running: light-dark(#e9f3fc, #13293d);
+    --tint-warning: light-dark(#fdf1dd, #3d2810);
+    --tint-quiet: light-dark(#f0f0f1, #292830);
+
+    --grey-active: light-dark(#737278, #cfced5);
+    --grey-live: light-dark(#89888d, #9a99a0);
+    --grey-still: light-dark(#a4a3a8, #74737b);
+
+    --alert-bg: light-dark(#fcf1ef, #4a1a10);
+    --alert-text: light-dark(#8b2615, #fbd5cd);
+    --fail-text: light-dark(#ae1800, #f57f6c);
+
+    --accent-solid: light-dark(#1068bf, #1068bf);
+    --accent-solid-hover: light-dark(#0b5cad, #428fdc);
+    --danger-solid: light-dark(#c0341a, #a1230c);
+    --danger-solid-hover: light-dark(#a1230c, #c0341a);
+    --on-solid: #fff;
+
+    /* Tones tint a glyph only, so they have to hold up against the row behind it. */
+    --tone-info: light-dark(#1f75cb, #8cb8e4);
+    --tone-positive: light-dark(#108548, #7cc08c);
+    --tone-caution: light-dark(#ab6100, #dfb160);
+    --tone-danger: light-dark(#dd2b0e, #e0897a);
+    --tone-muted: light-dark(#737278, #96959b);
+
+    --overlay: light-dark(rgba(36, 35, 40, 0.42), rgba(10, 9, 12, 0.72));
+    --shadow-menu: light-dark(0 6px 18px rgba(0, 0, 0, 0.16), 0 6px 18px rgba(0, 0, 0, 0.5));
+    --shadow-modal: light-dark(0 8px 24px rgba(0, 0, 0, 0.2), 0 8px 24px rgba(0, 0, 0, 0.55));
+    --shadow-toast: light-dark(0 4px 12px rgba(0, 0, 0, 0.16), 0 4px 12px rgba(0, 0, 0, 0.45));
+
     --radius: 4px;
     --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
     --mono: "JetBrains Mono", "Cascadia Mono", Menlo, Consolas, "Liberation Mono", monospace;
+
+    /* Overwritten from the stored settings; these are only what the first paint uses. */
+    --col-status: 104px;
+    --col-repo: 248px;
+    --col-pipeline: 76px;
+    --col-commit: 280px;
+    --col-stages: 300px;
+    --col-time: 128px;
+    /* Not one of those: locked, and read by the layout as the room it cannot use. */
+    --col-actions: 248px;
+}
+
+:root[data-theme="dark"] {
+    color-scheme: dark;
+}
+
+:root[data-theme="light"] {
+    color-scheme: light;
 }
 
 * {
@@ -43,7 +106,6 @@ body {
     font-size: 14px;
     line-height: 1.5;
     color: var(--text);
-    color-scheme: dark;
 }
 
 a {
@@ -169,8 +231,8 @@ a:focus-visible {
 
 .btn-conn.conn-bad {
     border-color: var(--red);
-    background: #3d160c;
-    color: #fbd5cd;
+    background: var(--tint-failed);
+    color: var(--alert-text);
 }
 
 .btn-conn.conn-bad svg {
@@ -196,9 +258,9 @@ a:focus-visible {
 .alert {
     margin: 0;
     padding: 10px 16px;
-    background: #4a1a10;
+    background: var(--alert-bg);
     border-bottom: 1px solid var(--red);
-    color: #fbd5cd;
+    color: var(--alert-text);
 }
 
 .tabs {
@@ -276,13 +338,6 @@ a:focus-visible {
     margin-right: 2px;
 }
 
-.tagbar-scope {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    white-space: nowrap;
-}
-
 .tag-chip {
     display: inline-flex;
     align-items: center;
@@ -310,7 +365,7 @@ a:focus-visible {
 
 .tag-chip-filter.is-active {
     border-color: var(--blue);
-    background: #13293d;
+    background: var(--tint-running);
     color: var(--blue-strong);
 }
 
@@ -333,7 +388,9 @@ a:focus-visible {
     background: none;
     font: inherit;
     cursor: pointer;
+    /* Clips rather than pushing the flags beside it off the row. */
     min-width: 0;
+    overflow: hidden;
 }
 
 .repo-tags .tag-chip {
@@ -372,11 +429,6 @@ a:focus-visible {
     font-size: 13px;
 }
 
-.field-unit {
-    color: var(--text-muted);
-    margin-left: -4px;
-}
-
 .input {
     height: 32px;
     padding: 0 8px;
@@ -397,10 +449,6 @@ a:focus-visible {
 
 .input-search {
     width: 260px;
-}
-
-.input-num {
-    width: 72px;
 }
 
 .btn {
@@ -425,25 +473,25 @@ a:focus-visible {
 }
 
 .btn-confirm {
-    background: #1068bf;
-    border-color: #1068bf;
-    color: #fff;
+    background: var(--accent-solid);
+    border-color: var(--accent-solid);
+    color: var(--on-solid);
 }
 
 .btn-confirm:hover {
-    background: var(--blue);
-    border-color: var(--blue);
+    background: var(--accent-solid-hover);
+    border-color: var(--accent-solid-hover);
 }
 
 .btn-danger {
-    background: #a1230c;
-    border-color: #a1230c;
-    color: #fff;
+    background: var(--danger-solid);
+    border-color: var(--danger-solid);
+    color: var(--on-solid);
 }
 
 .btn-danger:hover {
-    background: #c0341a;
-    border-color: #c0341a;
+    background: var(--danger-solid-hover);
+    border-color: var(--danger-solid-hover);
 }
 
 .btn-inverted {
@@ -482,28 +530,28 @@ a:focus-visible {
 
 .btn-confirm.btn-icon,
 .btn-danger.btn-icon {
-    color: #fff;
+    color: var(--on-solid);
 }
 
-/* Tones tint the glyph only — muted enough to sit in a dense row without shouting. */
+/* Tones tint the glyph only, so a row of controls reads at a glance. */
 .btn.tone-info svg {
-    color: #6f9dd0;
+    color: var(--tone-info);
 }
 
 .btn.tone-positive svg {
-    color: #63a06f;
+    color: var(--tone-positive);
 }
 
 .btn.tone-caution svg {
-    color: #c9963f;
+    color: var(--tone-caution);
 }
 
 .btn.tone-danger svg {
-    color: #c4695a;
+    color: var(--tone-danger);
 }
 
 .btn.tone-muted svg {
-    color: #7b7a80;
+    color: var(--tone-muted);
 }
 
 .btn:hover:not(:disabled) svg {
@@ -554,7 +602,7 @@ a:focus-visible {
     background: var(--bg-raised);
     border: 1px solid var(--border-strong);
     border-radius: 6px;
-    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.5);
+    box-shadow: var(--shadow-menu);
 }
 
 .menu-item {
@@ -650,51 +698,115 @@ a:focus-visible {
 }
 
 /*
- * Widths are assigned to every column except the commit, which takes whatever is
- * left. The stage bubbles are the reason the board exists, so they get a real
- * width instead of the remainder — the other way round, a narrow window starved
- * them to zero while the commit message kept a quarter of the table.
+ * The table is as wide as the page allows and no wider. The row controls hold a
+ * fixed column and the rest divide up what is left, so a handle never changes
+ * the width of the board — it only moves a line, taking from one side to give to
+ * the other. `columnResizer` works the pixels out and writes them here.
  */
 .col-status {
-    width: 104px;
+    width: var(--col-status);
 }
 
 .col-repo {
-    width: 232px;
+    width: var(--col-repo);
 }
 
 .col-pipeline {
-    width: 56px;
+    width: var(--col-pipeline);
 }
 
-/* No width: the commit title is the one thing that can ellipsise gracefully. */
+.col-commit {
+    width: var(--col-commit);
+}
 
 .col-stages {
-    width: 236px;
+    width: var(--col-stages);
 }
 
-/* Wide enough for "checked 12:58 PM" on one line in a 12-hour locale. */
 .col-time {
-    width: 128px;
+    width: var(--col-time);
     white-space: nowrap;
 }
 
-/* Five buttons, two separators and the cell padding — anything less clips them. */
+/*
+ * Locked, and it does not need to be otherwise: it holds six buttons, and the
+ * width that fits them is the only one worth having. Everything else is measured
+ * against what is left once this is taken out.
+ */
 .col-actions {
-    width: 216px;
+    width: var(--col-actions);
 }
 
 /*
- * On the board the controls are secondary to the data. Five outlined boxes on
- * every row is 240 boxes at the watch-list sizes this is built for, all of them
- * competing with the thing you came to read. So: glyph only, chrome only when
- * you actually reach for one.
+ * A header label has to give way before the boundary does. Narrow a column past
+ * its own heading and the word used to run on into the next cell and straight
+ * through the grip drawn there.
+ */
+.board thead th {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/*
+ * A drag target has to be wide enough to hit and narrow enough not to be in the
+ * way. It sits just inside the header cell rather than straddling the boundary,
+ * because the cell has to clip its label and would clip a grip hanging off it
+ * too. The cell is a positioned element already, by being sticky.
+ */
+.col-grip {
+    position: absolute;
+    top: 0;
+    right: 0;
+    width: 9px;
+    height: 100%;
+    cursor: col-resize;
+    z-index: 5;
+}
+
+/*
+ * Standing visible rather than appearing on hover: a control nobody can see is a
+ * control nobody knows is there. Drawn at exactly the weight of the lines between
+ * rows, so six of them across the header read as the grid they are part of rather
+ * than as six marks laid on top of it.
+ */
+.col-grip::after {
+    content: "";
+    position: absolute;
+    top: 4px;
+    bottom: 4px;
+    right: 0;
+    width: 1px;
+    background: var(--border);
+    transition: background-color 120ms ease;
+}
+
+.col-grip:hover::after,
+.col-grip:focus-visible::after,
+body.is-resizing .col-grip::after {
+    background: var(--blue);
+}
+
+.col-grip:focus-visible {
+    outline: none;
+}
+
+/* Held for the whole drag, so the cursor does not flicker over the cells. */
+body.is-resizing {
+    cursor: col-resize;
+    user-select: none;
+}
+
+/*
+ * On the board the controls are secondary to the data — but only secondary. The
+ * first pass at this took them down to 0.62, which past a certain screen read as
+ * "there is nothing here" rather than "this is not the point".
  */
 .col-actions .btn {
     width: 30px;
     background: none;
     border-color: transparent;
-    opacity: 0.62;
+    opacity: 0.82;
     transition: opacity 120ms ease, background-color 120ms ease, border-color 120ms ease;
 }
 
@@ -710,7 +822,7 @@ a:focus-visible {
 }
 
 .col-actions .btn:disabled {
-    opacity: 0.22;
+    opacity: 0.34;
 }
 
 /* With the boxes gone the separators carry the grouping, so keep them faint. */
@@ -729,8 +841,7 @@ a:focus-visible {
 /*
  * A section per namespace, instead of repeating the same group chip down forty
  * rows. Sticks under the column header so you always know which one you are in.
- */
-/*
+ *
  * Pinned one at a time by `updateStickyGroups`, never by CSS alone: a sticky
  * table cell is bound by the table rather than by its row group, so every
  * heading that scrolled past would stay pinned at this same offset — six of them
@@ -773,9 +884,20 @@ a:focus-visible {
     color: var(--red);
 }
 
+/* The name and the branch, which is the pair that names the row: two rows for
+   one repo are the same word twice and differ only in the branch. */
+.repo-head {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+}
+
 .repo-name {
     font-weight: 600;
     display: block;
+    flex: 0 1 auto;
+    min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -786,26 +908,33 @@ a:focus-visible {
     display: none;
 }
 
-/* Why the row is red, without opening the stage popover. */
-.fail-hint {
-    color: #f57f6c;
-    /* The one part of the sub-line allowed to shrink, so the ref stays whole. */
+.repo-ref {
+    flex: none;
+}
+
+/* The branch gives up room three times faster than the name — of the two, the
+   name is the one worth reading whole — and the rest of it is a hover away. */
+.repo-head .repo-ref {
+    flex: 0 3 auto;
     min-width: 0;
+    max-width: 60%;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
 }
 
-.repo-ref {
-    flex: none;
-}
-
+/*
+ * The line under the name: a pause or a missing branch, and the tags. The flags
+ * do not shrink — an abbreviated "Branch go…" says nothing — so the line clips,
+ * and the tags, being last, are what goes first.
+ */
 .repo-sub {
     display: flex;
     align-items: center;
     gap: 6px;
     font-size: 12px;
     color: var(--text-dim);
+    overflow: hidden;
 }
 
 .chip {
@@ -835,21 +964,57 @@ a:focus-visible {
     opacity: 1;
 }
 
-/* The one thing on a paused row that must not fade with it. */
-.paused-flag {
+/*
+ * A branch that has been deleted. The row is struck through rather than removed:
+ * nothing here can change again, but deciding it is finished with is the user's
+ * call, not the sweep's. The controls are spared the line so the one that clears
+ * it away is still usable.
+ */
+.repo-gone td:not(.col-actions) {
+    position: relative;
+}
+
+.repo-gone td:not(.col-actions)::after {
+    content: '';
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 50%;
+    height: 1px;
+    background: var(--text-dim);
+    pointer-events: none;
+    z-index: 2;
+}
+
+.repo-gone td:first-child::after {
+    left: 8px;
+}
+
+.paused-flag,
+.gone-flag {
     display: inline-flex;
     align-items: center;
     gap: 3px;
     flex: none;
     padding: 0 5px 0 3px;
     border-radius: 8px;
-    background: #4a2f0c;
-    color: #f0a83a;
     font-size: 11px;
     font-weight: 600;
 }
 
-.paused-flag svg {
+/* The one thing on a paused row that must not fade with it. */
+.paused-flag {
+    background: var(--tint-warning);
+    color: var(--orange);
+}
+
+.gone-flag {
+    background: var(--tint-failed);
+    color: var(--red);
+}
+
+.paused-flag svg,
+.gone-flag svg {
     flex: none;
 }
 
@@ -946,17 +1111,17 @@ a:focus-visible {
 /* ---------- status colours ---------- */
 .s-success {
     --status: var(--green);
-    --status-bg: #14311f;
+    --status-bg: var(--tint-success);
 }
 
 .s-failed {
     --status: var(--red);
-    --status-bg: #3d160c;
+    --status-bg: var(--tint-failed);
 }
 
 .s-running {
     --status: var(--blue-strong);
-    --status-bg: #13293d;
+    --status-bg: var(--tint-running);
 }
 
 /*
@@ -965,39 +1130,39 @@ a:focus-visible {
  * happened, the dimmer it is — with one exception.
  *
  * `manual` is that exception: it is the only grey you can act on, so it is the
- * brightest of them and outlined rather than solid, which says "not run, but it
+ * strongest of them and outlined rather than solid, which says "not run, but it
  * could be" instead of "not run, and that is that".
  */
 
 /* Pending is "nothing has happened yet", so it reads as neutral rather than warm. */
 .s-pending {
-    --status: #9a99a0;
-    --status-bg: #2e2d34;
+    --status: var(--grey-live);
+    --status-bg: var(--tint-quiet);
 }
 
 .s-warning {
-    --status: #e0812e;
-    --status-bg: #3d2810;
+    --status: var(--orange);
+    --status-bg: var(--tint-warning);
 }
 
 .s-canceled {
-    --status: #82818a;
-    --status-bg: #292830;
+    --status: var(--grey-still);
+    --status-bg: var(--tint-quiet);
 }
 
 .s-skipped {
-    --status: #74737b;
-    --status-bg: #232229;
+    --status: var(--grey-still);
+    --status-bg: var(--bg-raised);
 }
 
 .s-manual {
-    --status: #cfced5;
-    --status-bg: #38373f;
+    --status: var(--grey-active);
+    --status-bg: var(--bg-hover);
 }
 
 .s-neutral {
-    --status: #82818a;
-    --status-bg: #292830;
+    --status: var(--grey-still);
+    --status-bg: var(--tint-quiet);
 }
 
 /*
@@ -1007,7 +1172,7 @@ a:focus-visible {
  */
 .s-paused {
     --status: var(--orange);
-    --status-bg: #3d2810;
+    --status-bg: var(--tint-warning);
 }
 
 .badge.s-manual {
@@ -1044,11 +1209,13 @@ a:focus-visible {
 }
 
 @keyframes pulse {
+
     0%,
     100% {
         opacity: 1;
         transform: scale(1);
     }
+
     50% {
         opacity: 0.5;
         transform: scale(0.88);
@@ -1062,15 +1229,18 @@ a:focus-visible {
 }
 
 /* ---------- stage bubbles ---------- */
+/* Room for the dashed halo a stage holding a manual job wears. */
 .stages {
     display: flex;
     align-items: center;
-    gap: 2px;
+    gap: 4px;
+    row-gap: 8px;
     flex-wrap: wrap;
 }
 
 /* Filled by default, hollow on hover — the inverse reads as "pressed". */
 .bubble {
+    position: relative;
     width: 22px;
     height: 22px;
     padding: 0;
@@ -1106,6 +1276,46 @@ a:focus-visible {
     background: var(--status);
     color: var(--bg-header);
     border-style: solid;
+}
+
+/*
+ * What the headline could not also say.
+ *
+ * A stage is one bubble and its status is the worst thing in it, which buries
+ * everything else: a red stage holding a manual deploy showed no sign of the
+ * deploy at all. So the dashed edge — already this board's mark for "not run, but
+ * it could be" — is borrowed for any stage with a manual job in it, and a dot
+ * marks one where something failed and was allowed to. Both compose with whatever
+ * colour the headline happens to be.
+ */
+/*
+ * A halo rather than a dashed border. The bubble is filled with its own status
+ * colour, so a dashed edge in that same colour is a dashed line drawn on top of
+ * itself — invisible at 22px, which is the only size this is ever seen at.
+ */
+.bubble.has-manual::before {
+    content: "";
+    position: absolute;
+    inset: -4px;
+    border: 1.5px dashed var(--status);
+    border-radius: 50%;
+    pointer-events: none;
+}
+
+.bubble.has-warn::after {
+    content: "";
+    position: absolute;
+    top: -1px;
+    right: -1px;
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--orange);
+    box-shadow: 0 0 0 1.5px var(--bg);
+}
+
+.board tr.repo:hover .bubble.has-warn::after {
+    box-shadow: 0 0 0 1.5px var(--bg-raised);
 }
 
 .bubble-sm {
@@ -1149,11 +1359,60 @@ a:focus-visible {
     width: 26px;
 }
 
+/* ---------- tooltip ---------- */
+/*
+ * The board's own tooltip: one node on the body, moved to whatever is hovered.
+ *
+ * A `title` attribute would do none of this — it cannot hold a list, it arrives
+ * a second late, and it is the operating system's box rather than the board's.
+ * Above the menu so a tip raised from one is readable, under the toasts, and
+ * transparent to the pointer so it can never steal the hover that opened it.
+ */
+.tooltip {
+    position: fixed;
+    z-index: 28;
+    top: 0;
+    left: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    max-width: min(320px, calc(100vw - 24px));
+    padding: 6px 9px;
+    background: var(--bg-raised);
+    border: 1px solid var(--border-strong);
+    border-radius: 6px;
+    box-shadow: var(--shadow-menu);
+    color: var(--text);
+    font-size: 12px;
+    line-height: 1.5;
+    pointer-events: none;
+}
+
+.tooltip-title {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+    color: var(--text-muted);
+}
+
+/* The body is written with newlines, so a list of failed jobs needs no markup. */
+.tooltip-body {
+    white-space: pre-line;
+    overflow-wrap: anywhere;
+}
+
+/* Something that says more than it shows, and is not a control: a button keeps
+   its pointer and a link keeps its own, whatever they have to add. */
+[data-tip]:not(button):not(a) {
+    cursor: help;
+}
+
 /* ---------- stage popover ---------- */
 .popover {
     position: fixed;
     z-index: 15;
-    min-width: 260px;
+    min-width: 280px;
     max-width: min(460px, calc(100vw - 24px));
     max-height: min(60vh, 520px);
     overflow: auto;
@@ -1161,7 +1420,7 @@ a:focus-visible {
     background: var(--bg-raised);
     border: 1px solid var(--border-strong);
     border-radius: 6px;
-    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.5);
+    box-shadow: var(--shadow-modal);
 }
 
 .popover-head {
@@ -1171,6 +1430,10 @@ a:focus-visible {
     margin-bottom: 8px;
     padding-bottom: 8px;
     border-bottom: 1px solid var(--border);
+}
+
+.popover-head .spacer {
+    flex: 1;
 }
 
 .popover-title {
@@ -1231,7 +1494,7 @@ a:focus-visible {
  * needs, and reads as "there is nothing here" rather than "this is secondary".
  */
 .job-actions .btn {
-    opacity: 0.55;
+    opacity: 0.7;
     transition: opacity 120ms ease;
 }
 
@@ -1241,7 +1504,7 @@ a:focus-visible {
 }
 
 .job-actions .btn:disabled {
-    opacity: 0.25;
+    opacity: 0.35;
 }
 
 /* Nothing hovers on a touch screen, so quiet would mean permanently faint. */
@@ -1268,7 +1531,7 @@ a:focus-visible {
 .overlay {
     position: fixed;
     inset: 0;
-    background: rgba(10, 9, 12, 0.72);
+    background: var(--overlay);
     display: grid;
     place-items: center;
     padding: 24px;
@@ -1283,12 +1546,24 @@ a:focus-visible {
     background: var(--bg-raised);
     border: 1px solid var(--border-strong);
     border-radius: 6px;
-    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.55);
+    box-shadow: var(--shadow-modal);
     overflow: hidden;
 }
 
 .modal-sm {
     width: min(520px, 100%);
+}
+
+.modal-config {
+    width: min(820px, calc(100vw - 32px));
+    height: min(660px, calc(100vh - 48px));
+}
+
+.modal-config .modal-body {
+    display: flex;
+    flex-direction: column;
+    padding: 16px;
+    overflow: hidden;
 }
 
 /* Log viewer wants the full height available, not just its content height. */
@@ -1312,6 +1587,9 @@ a:focus-visible {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
 }
 
 .modal-body {
@@ -1352,7 +1630,7 @@ a:focus-visible {
     font-weight: 600;
 }
 
-.form-row .hint {
+.hint {
     color: var(--text-dim);
     font-size: 12px;
 }
@@ -1367,6 +1645,10 @@ a:focus-visible {
     min-height: 20px;
 }
 
+.form-error:empty {
+    min-height: 0;
+}
+
 /* A paragraph sitting directly in a dialog body, which must not bring the
  * browser's default margins with it. Here rather than on the elements
  * themselves: these were the only two inline styles in the app. */
@@ -1376,6 +1658,201 @@ a:focus-visible {
 
 .modal-body .hint-block {
     margin: 0 0 8px;
+}
+
+/* ---------- add repo lookup ---------- */
+
+/*
+ * What the dialog found while you were still typing. A repo that is not there is
+ * said here rather than after pressing Add, and it is the same answer that fills
+ * the branch list beneath it.
+ */
+.lookup {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-height: 20px;
+    font-size: 12px;
+}
+
+.lookup:empty {
+    min-height: 0;
+}
+
+.lookup svg {
+    flex: none;
+}
+
+.lookup-path {
+    font-family: var(--mono);
+    color: var(--green);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.lookup-miss {
+    color: var(--red);
+}
+
+/* ---------- configuration ---------- */
+.config {
+    display: grid;
+    grid-template-columns: 140px 1fr;
+    gap: 20px;
+    height: 100%;
+    min-height: 0;
+    flex: 1 1 auto;
+}
+
+.config-nav {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    border-right: 1px solid var(--border);
+    padding-right: 12px;
+}
+
+.config-tab {
+    padding: 7px 10px;
+    border: 0;
+    border-radius: var(--radius);
+    background: none;
+    font: inherit;
+    font-size: 13px;
+    color: var(--text-muted);
+    text-align: left;
+    cursor: pointer;
+}
+
+.config-tab:hover {
+    background: var(--bg-hover);
+    color: var(--text);
+}
+
+.config-tab.is-active {
+    background: var(--tint-running);
+    color: var(--blue-strong);
+    font-weight: 600;
+}
+
+.config-body {
+    min-width: 0;
+    height: 100%;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    overflow-y: auto;
+    padding-right: 6px;
+    scrollbar-width: thin;
+    scrollbar-color: var(--border-strong) transparent;
+}
+
+.config-body::-webkit-scrollbar,
+.tag-manage-list::-webkit-scrollbar,
+.tag-member-list::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+}
+
+.config-body::-webkit-scrollbar-track,
+.tag-manage-list::-webkit-scrollbar-track,
+.tag-member-list::-webkit-scrollbar-track {
+    background: transparent;
+    border: none;
+}
+
+.config-body::-webkit-scrollbar-thumb,
+.tag-manage-list::-webkit-scrollbar-thumb,
+.tag-member-list::-webkit-scrollbar-thumb {
+    background: var(--border-strong);
+    border-radius: 999px;
+    border: none;
+}
+
+.config-body::-webkit-scrollbar-thumb:hover,
+.tag-manage-list::-webkit-scrollbar-thumb:hover,
+.tag-member-list::-webkit-scrollbar-thumb:hover {
+    background: var(--text-dim);
+}
+
+.config-pane {
+    max-width: 100%;
+}
+
+.config-heading {
+    margin: 20px 0 10px;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.6px;
+    text-transform: uppercase;
+    color: var(--text-muted);
+}
+
+.config-heading:first-child {
+    margin-top: 0;
+}
+
+.config-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+}
+
+.config-toggle {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+    cursor: pointer;
+}
+
+/* The connection, said rather than edited — the editor is one button away. */
+.config-conn {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--bg);
+}
+
+.config-conn.conn-ok {
+    border-color: var(--green);
+}
+
+.config-conn.conn-warn {
+    border-color: var(--orange);
+}
+
+.config-conn.conn-bad {
+    border-color: var(--red);
+}
+
+.config-conn.conn-none {
+    border-color: var(--blue);
+}
+
+.config-conn>svg {
+    flex: none;
+    color: var(--text-muted);
+}
+
+.config-conn-text {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    flex: 1;
+    min-width: 0;
+}
+
+.config-conn-head {
+    font-weight: 600;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 /* ---------- tag dialogs ---------- */
@@ -1432,11 +1909,21 @@ a:focus-visible {
 
 /* Two panes: the tags on the left, the repos that carry the chosen one on the
    right. Seven passes here instead of eighty single-repo dialogs. */
+.tag-pane {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    min-height: 0;
+    flex: 1 1 auto;
+}
+
 .tag-manage {
     display: grid;
-    grid-template-columns: minmax(180px, 260px) 1fr;
+    grid-template-columns: 210px 1fr;
     gap: 16px;
-    min-height: 340px;
+    height: 100%;
+    min-height: 0;
+    flex: 1 1 auto;
 }
 
 .tag-manage-side {
@@ -1444,14 +1931,19 @@ a:focus-visible {
     flex-direction: column;
     gap: 8px;
     min-width: 0;
+    height: 100%;
+    min-height: 0;
 }
 
 .tag-manage-list {
     display: flex;
     flex-direction: column;
     gap: 2px;
-    max-height: 46vh;
-    overflow: auto;
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    scrollbar-width: thin;
+    scrollbar-color: var(--border-strong) transparent;
 }
 
 .tag-manage-row {
@@ -1469,7 +1961,7 @@ a:focus-visible {
 
 .tag-manage-row.is-selected {
     border-color: var(--blue);
-    background: #13293d;
+    background: var(--tint-running);
 }
 
 .tag-manage-pick {
@@ -1498,6 +1990,7 @@ a:focus-visible {
 .tag-manage-new {
     display: flex;
     gap: 6px;
+    flex: 0 0 auto;
 }
 
 .tag-manage-new .input {
@@ -1506,7 +1999,18 @@ a:focus-visible {
 }
 
 .tag-manage-main {
+    display: flex;
+    flex-direction: column;
     min-width: 0;
+    height: 100%;
+    min-height: 0;
+}
+
+.tag-manage-members {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    min-height: 0;
 }
 
 .tag-member-head {
@@ -1515,11 +2019,12 @@ a:focus-visible {
     gap: 6px;
     margin-bottom: 8px;
     flex-wrap: wrap;
+    flex: 0 0 auto;
 }
 
 .tag-member-head .input {
     flex: 1;
-    min-width: 140px;
+    min-width: 120px;
 }
 
 .tag-member-head .spacer {
@@ -1530,8 +2035,11 @@ a:focus-visible {
     display: flex;
     flex-direction: column;
     gap: 1px;
-    max-height: 42vh;
-    overflow: auto;
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    scrollbar-width: thin;
+    scrollbar-color: var(--border-strong) transparent;
     border: 1px solid var(--border);
     border-radius: var(--radius);
     padding: 4px;
@@ -1581,7 +2089,7 @@ a:focus-visible {
 .dropzone-over {
     border-color: var(--blue);
     border-style: solid;
-    background: #13293d;
+    background: var(--tint-running);
     color: var(--text);
 }
 
@@ -1635,7 +2143,14 @@ a:focus-visible {
     color: var(--text);
 }
 
-/* ---------- job log ---------- */
+/*
+ * ---------- job log ----------
+ *
+ * The one surface that stays dark in both themes. A runner writes for a terminal
+ * — its colours are chosen against black, and half of them are unreadable on
+ * white — so this is a terminal wherever it is embedded, and the ANSI palette
+ * below needs tuning exactly once.
+ */
 .terminal {
     margin: 0;
     padding: 12px 16px;
@@ -1643,9 +2158,13 @@ a:focus-visible {
     font-size: 12.5px;
     line-height: 1.45;
     color: #ececef;
-    background: var(--bg-header);
+    background: #141317;
     white-space: pre-wrap;
     word-break: break-word;
+}
+
+.modal-body-flush {
+    background: #141317;
 }
 
 .terminal .a-b {
@@ -1766,12 +2285,12 @@ a:focus-visible {
     background: var(--bg-hover);
     border: 1px solid var(--border-strong);
     color: var(--text);
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.45);
+    box-shadow: var(--shadow-toast);
     font-size: 13px;
 }
 
 .toast-error {
-    background: #4a1a10;
+    background: var(--alert-bg);
     border-color: var(--red);
-    color: #fbd5cd;
+    color: var(--alert-text);
 }

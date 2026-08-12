@@ -87,9 +87,14 @@ export function tagPicker(known: TagView[], initial: string[]): {
     };
 }
 
+/** A row's name, and its branch when that is not the only thing it says. */
+export function repoLabel(repo: RepoView): string {
+    return `${repo.name} · ${repo.ref}`;
+}
+
 /** The per-repo path: discoverable, for one-off changes. */
 export function openRepoTags(repo: RepoView, known: TagView[], onDone: () => void): void {
-    const modal = openModal({ title: [`Tags for ${repo.name}`], small: true });
+    const modal = openModal({ title: [`Tags for ${repoLabel(repo)}`], small: true });
     const picker = tagPicker(known, repo.tags);
     const error = h('div', { class: 'form-error', role: 'alert' });
 
@@ -99,7 +104,7 @@ export function openRepoTags(repo: RepoView, known: TagView[], onDone: () => voi
     save.addEventListener('click', async () => {
         save.disabled = true;
         try {
-            await api.setRepoTags(repo.name, picker.value());
+            await api.setRepoTags(repo.id, picker.value());
             onDone();
             modal.close();
         } catch (failure) {
@@ -121,21 +126,27 @@ export function openRepoTags(repo: RepoView, known: TagView[], onDone: () => voi
  * The bulk path, and the one that matters at scale: pick a tag, tick its repos
  * from a searchable list. Eighty repos across seven tags is seven passes here,
  * against eighty dialogs the other way round.
+ *
+ * A pane rather than a dialog of its own — it is one half of the config window
+ * now, which is where a thing you set up rather than a thing you do belongs.
  */
-export function openManageTags(repos: RepoView[], known: TagView[], onDone: () => void): void {
-    // The default width; the two panes get their own height cap in CSS.
-    const modal = openModal({ title: ['Manage tags'] });
-
-    let tags = [...known];
+export function tagsPane(options: {
+    repos(): RepoView[];
+    tags(): TagView[];
+    /** Pulls the board again, since a membership change moves many rows at once. */
+    onChange(): void;
+}): HTMLElement {
+    let tags = [...options.tags()];
     let selected = tags[0]?.name ?? null;
-    let members = new Set<string>();
+    let members = new Set<number>();
     let filter = '';
 
     const tagList = h('div', { class: 'tag-manage-list' });
     const memberPane = h('div', { class: 'tag-manage-members' });
     const error = h('div', { class: 'form-error', role: 'alert' });
 
-    const membersOf = (tag: string) => new Set(repos.filter((repo) => repo.tags.includes(tag)).map((r) => r.name));
+    const membersOf = (tag: string) =>
+        new Set(options.repos().filter((repo) => repo.tags.includes(tag)).map((repo) => repo.id));
 
     const select = (tag: string | null) => {
         selected = tag;
@@ -145,15 +156,15 @@ export function openManageTags(repos: RepoView[], known: TagView[], onDone: () =
         drawMembers();
     };
 
-    const refresh = async () => {
-        onDone();
+    const refresh = () => {
+        options.onChange();
         error.textContent = '';
     };
 
     function drawTags(): void {
         tagList.replaceChildren(
-            ...tags.map((tag) => {
-                const row = h(
+            ...tags.map((tag) =>
+                h(
                     'div',
                     { class: `tag-manage-row${tag.name === selected ? ' is-selected' : ''}` },
                     h('button', {
@@ -174,9 +185,8 @@ export function openManageTags(repos: RepoView[], known: TagView[], onDone: () =
                         tone: 'danger',
                         onClick: () => void remove(tag.name),
                     }),
-                );
-                return row;
-            }),
+                )
+            ),
         );
         if (tags.length === 0) {
             tagList.appendChild(h('p', { class: 'hint', text: 'No tags yet. Create one below.' }));
@@ -189,10 +199,11 @@ export function openManageTags(repos: RepoView[], known: TagView[], onDone: () =
             return;
         }
 
+        const repos = options.repos();
         const search = h('input', {
             type: 'search',
             class: 'input',
-            placeholder: `Filter ${repos.length} repos`,
+            placeholder: `Filter ${repos.length} rows`,
             value: filter,
             'aria-label': 'Filter repos',
         });
@@ -206,17 +217,20 @@ export function openManageTags(repos: RepoView[], known: TagView[], onDone: () =
         });
 
         const matching = repos.filter((repo) =>
-            filter === '' || repo.name.toLowerCase().includes(filter) || repo.group.toLowerCase().includes(filter)
+            filter === ''
+            || repo.name.toLowerCase().includes(filter)
+            || repo.group.toLowerCase().includes(filter)
+            || repo.ref.toLowerCase().includes(filter)
         );
 
         const list = h(
             'div',
             { class: 'tag-member-list' },
             ...matching.map((repo) => {
-                const box = h('input', { type: 'checkbox', checked: members.has(repo.name) });
+                const box = h('input', { type: 'checkbox', checked: members.has(repo.id) });
                 box.addEventListener('change', () => {
-                    if (box.checked) members.add(repo.name);
-                    else members.delete(repo.name);
+                    if (box.checked) members.add(repo.id);
+                    else members.delete(repo.id);
                     count.textContent = `${members.size} selected`;
                 });
                 return h(
@@ -224,6 +238,7 @@ export function openManageTags(repos: RepoView[], known: TagView[], onDone: () =
                     { class: 'tag-member' },
                     box,
                     h('span', { class: 'tag-member-name', text: repo.name }),
+                    h('span', { class: 'repo-ref', text: repo.ref }),
                     h('span', { class: 'muted', text: repo.group }),
                 );
             }),
@@ -237,7 +252,7 @@ export function openManageTags(repos: RepoView[], known: TagView[], onDone: () =
             text: 'All shown',
             small: true,
             onClick: () => {
-                for (const repo of matching) members.add(repo.name);
+                for (const repo of matching) members.add(repo.id);
                 drawMembers();
             },
         });
@@ -269,8 +284,8 @@ export function openManageTags(repos: RepoView[], known: TagView[], onDone: () =
         try {
             const result = await api.setTagRepos(selected, [...members]);
             tags = result.tags;
-            toastInfo(`${selected}: ${result.repos.length} repo${result.repos.length === 1 ? '' : 's'}`);
-            await refresh();
+            toastInfo(`${selected}: ${result.repos.length} row${result.repos.length === 1 ? '' : 's'}`);
+            refresh();
             drawTags();
         } catch (failure) {
             error.textContent = failure instanceof Error ? failure.message : String(failure);
@@ -283,7 +298,7 @@ export function openManageTags(repos: RepoView[], known: TagView[], onDone: () =
         try {
             tags = (await api.renameTag(from, next)).tags;
             if (selected === from) selected = next;
-            await refresh();
+            refresh();
             drawTags();
             drawMembers();
         } catch (failure) {
@@ -303,7 +318,7 @@ export function openManageTags(repos: RepoView[], known: TagView[], onDone: () =
         try {
             tags = (await api.deleteTag(name)).tags;
             if (selected === name) select(tags[0]?.name ?? null);
-            await refresh();
+            refresh();
             drawTags();
         } catch (failure) {
             error.textContent = failure instanceof Error ? failure.message : String(failure);
@@ -322,7 +337,7 @@ export function openManageTags(repos: RepoView[], known: TagView[], onDone: () =
                 tags = (await api.createTag(name)).tags;
                 newTag.value = '';
                 select(name);
-                await refresh();
+                refresh();
             } catch (failure) {
                 error.textContent = failure instanceof Error ? failure.message : String(failure);
             }
@@ -335,10 +350,11 @@ export function openManageTags(repos: RepoView[], known: TagView[], onDone: () =
         }
     });
 
-    const close = button({ label: 'Close', text: 'Close' });
-    close.addEventListener('click', () => modal.close());
+    select(selected);
 
-    modal.body.append(
+    return h(
+        'div',
+        { class: 'tag-pane' },
         h(
             'div',
             { class: 'tag-manage' },
@@ -353,31 +369,30 @@ export function openManageTags(repos: RepoView[], known: TagView[], onDone: () =
         ),
         error,
     );
-    modal.footer.append(h('span', { class: 'spacer' }), close);
-
-    select(selected);
 }
 
-/** The chips under the status tabs: the board's tag filter. */
+/**
+ * The chips under the status tabs: the board's tag filter.
+ *
+ * Filtering only. It narrows what is on screen and nothing else — the sweep still
+ * covers every watched repo, so a tag you have not selected is still a tag that
+ * can tell you its pipeline broke.
+ */
 export function renderTagBar(options: {
     container: HTMLElement;
     tags: TagView[];
     active: string[];
-    scoped: boolean;
-    /** "3 of 43" — what the sweep would cover if scoping is on. */
-    scopeSummary: string;
     onToggle(tag: string): void;
     onClear(): void;
-    onScope(scoped: boolean): void;
     onManage(): void;
     onSaveFilter(): void;
     saveable: boolean;
 }): void {
-    const { container, tags, active, scoped } = options;
+    const { container, tags, active } = options;
     container.replaceChildren();
 
     if (tags.length === 0 && !options.saveable) {
-        container.appendChild(
+        container.append(
             button({
                 label: 'Create and manage tags',
                 icon: 'tag',
@@ -385,8 +400,8 @@ export function renderTagBar(options: {
                 small: true,
                 onClick: options.onManage,
             }),
+            h('span', { class: 'hint', text: 'Group repos across namespaces however you like.' }),
         );
-        container.appendChild(h('span', { class: 'hint', text: 'Group repos across namespaces however you like.' }));
         return;
     }
 
@@ -394,41 +409,26 @@ export function renderTagBar(options: {
         h('span', { class: 'tagbar-label' }, icon('tag', 13), h('span', { text: 'Tags' })),
         ...tags.map((tag) => {
             const on = active.includes(tag.name);
-            const chip = h(
+            return h(
                 'button',
                 {
                     type: 'button',
                     class: `tag-chip tag-chip-filter${on ? ' is-active' : ''}`,
                     'aria-pressed': String(on),
-                    title: `${tag.count} repo${tag.count === 1 ? '' : 's'}`,
+                    'data-tip': `${tag.count} row${tag.count === 1 ? '' : 's'}${
+                        on ? ' — click to stop filtering by this' : ' — click to filter by this'
+                    }`,
                     onClick: () => options.onToggle(tag.name),
                 },
                 h('span', { text: tag.name }),
                 h('span', { class: 'tag-chip-count', text: String(tag.count) }),
             );
-            return chip;
         }),
     );
 
     if (active.length > 0) {
         container.append(
             button({ label: 'Clear the tag filter', text: 'Clear', small: true, onClick: options.onClear }),
-            // Scoping turns the filter from a view into what actually gets polled.
-            (() => {
-                const box = h('input', { type: 'checkbox', id: 'scope-sweep', checked: scoped });
-                box.addEventListener('change', () => options.onScope(box.checked));
-                const label = h('label', {
-                    class: 'field tagbar-scope',
-                    for: 'scope-sweep',
-                    title: 'Poll only the repos carrying a selected tag, instead of every watched repo. The rest keep their last known state.',
-                });
-                label.append(
-                    box,
-                    document.createTextNode(' Check only these '),
-                    h('span', { class: 'muted', text: options.scopeSummary }),
-                );
-                return label;
-            })(),
         );
     }
 
@@ -449,4 +449,3 @@ export function renderTagBar(options: {
         button({ label: 'Create and manage tags', icon: 'cog', text: 'Manage', small: true, onClick: options.onManage }),
     );
 }
-

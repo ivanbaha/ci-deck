@@ -18,6 +18,22 @@ const STORAGE_LABEL: Record<string, string> = {
     plaintext: 'plain text in the database',
 };
 
+/**
+ * Where the URL and the token each came from, in words. The config window shows
+ * this without opening the editor: "why can I not change this here" is answered
+ * by the answer being on screen, not by the field being greyed out.
+ */
+export function describeCredentials(credentials: CredentialsInfo): string {
+    const url = `URL ${SOURCE_LABEL[credentials.baseUrl.source]}`;
+    const token = credentials.token.present
+        ? `token ${SOURCE_LABEL[credentials.token.source]}`
+            + (credentials.token.source === 'store'
+                ? ` in ${STORAGE_LABEL[credentials.token.storage ?? ''] ?? credentials.token.storage}`
+                : '')
+        : 'no token';
+    return `${url}, ${token}`;
+}
+
 let active: ModalHandle | null = null;
 
 export function closeSetup(): void {

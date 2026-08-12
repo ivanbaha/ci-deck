@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test';
-import { aggregateStageStatus, buildStages, extractCommit } from '../src/core/stages.ts';
+import { aggregateStageStatus, buildStages, extractCommit, toStageView } from '../src/core/stages.ts';
 import type { GitLabJob, GitLabStatus } from '../src/gitlab/types.ts';
 import type { JobView } from '../src/shared/types.ts';
 
@@ -55,8 +55,49 @@ describe('aggregateStageStatus', () => {
         expect(aggregateStageStatus([view('manual'), view('canceled')])).toBe('canceled');
     });
 
+    /**
+     * The one that used to go the other way. Something in the stage did fail, and
+     * a stage that also happened to hold a manual job called itself manual and
+     * showed no sign of the failure at all.
+     */
+    it('treats a warning as worse than a manual job waiting to be started', () => {
+        expect(aggregateStageStatus([view('manual'), view('failed', true)])).toBe('warning');
+    });
+
     it('is successful only when nothing else stands out', () => {
         expect(aggregateStageStatus([view('success'), view('skipped')])).toBe('success');
+    });
+});
+
+/**
+ * A stage is one bubble, so whatever wins above hides everything under it. The
+ * two worth keeping are carried alongside the headline instead.
+ */
+describe('toStageView', () => {
+    it('marks a manual job the headline had to bury', () => {
+        const stage = toStageView('deploy', [view('failed'), view('manual')]);
+
+        expect(stage.status).toBe('failed');
+        expect(stage.hasManual).toBe(true);
+        expect(stage.hasWarning).toBe(false);
+    });
+
+    it('marks an allow_failure failure the headline had to bury', () => {
+        const stage = toStageView('test', [view('running'), view('failed', true)]);
+
+        expect(stage.status).toBe('running');
+        expect(stage.hasWarning).toBe(true);
+    });
+
+    it('does not call a hard failure a warning', () => {
+        expect(toStageView('test', [view('failed')]).hasWarning).toBe(false);
+    });
+
+    it('says neither when there is nothing to say', () => {
+        const stage = toStageView('build', [view('success')]);
+
+        expect(stage.hasManual).toBe(false);
+        expect(stage.hasWarning).toBe(false);
     });
 });
 

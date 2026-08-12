@@ -186,13 +186,19 @@ working directory.
 
 ## Using the board
 
-Each row is one repo's most recent pipeline on its branch: status badge, pipeline number,
-commit, the stage bubbles, and when it was last updated and last checked. Rows are grouped
-into sections by GitLab namespace, each section counting its repos and its failures. The
-top bar, the column header and the current section stay put as you scroll.
+Each row is one repo on one branch, showing its most recent pipeline there: status badge,
+pipeline number, commit, the stage bubbles, and when it was last updated and last checked.
+Rows are grouped into sections by GitLab namespace, each section counting its rows and its
+failures. The top bar, the column header and the current section stay put as you scroll.
 
 A red row names the jobs that failed next to the commit, so the usual question does not
 cost a click.
+
+**Branches.** A repo can be watched on as many branches as you like — `main` and the
+release branch, say — and each is its own row. Adding one looks the repo up as you type
+and offers the branches it actually has, so a name that is not there is said before you
+commit to it rather than after. Rows for the same repo sit together, and a branch that is
+deleted on GitLab is struck through so you can clear it away.
 
 **Stages and jobs.** Click a stage bubble for the jobs in that stage. Each job shows its
 status and duration, and carries the one control that applies to it:
@@ -203,35 +209,68 @@ status and duration, and carries the one control that applies to it:
 | manual | start — confirmed first, since manual jobs often deploy |
 | failed, success, canceled, skipped | retry |
 
+The stage header carries the same three, applied to every job in the stage at once —
+retry if anything failed, otherwise cancel if anything is still going, otherwise start if
+anything is waiting on you.
+
+A bubble shows the worst thing in its stage, which buries the rest, so two things it would
+otherwise hide are marked instead: a **dashed halo** for a stage that also holds a manual
+job, and an **amber dot** for one where something failed and was allowed to.
+
 Click the job itself to read its log: ANSI colours preserved, progress-bar spam collapsed,
-and auto-following while the job is still running. Retry and cancel are available there
-too, and the view keeps up with the job across a retry even though its id changes.
+and auto-following while the job is still running. Retry, cancel and copying the raw output
+are available there too, and the view keeps up with the job across a retry even though its
+id changes.
 
 **Row controls**, on the right of each row:
 
 | Icon | Action |
 | --- | --- |
-| ⟳ | check this repo now, ignoring the sweep and its cache |
+| ⟳ | check this row now, ignoring the sweep and its cache |
 | ↺ | retry the pipeline's failed jobs |
 | 🚫 | cancel the running pipeline (confirmed) |
+| 🔔 | notify, notify silently, or say nothing — click to cycle |
 | 👁 / 👁̶ | pause or resume watching |
 | 🗑 | remove from the board (confirmed) |
 
-**Watching, paused, removed.** A newly added repo is watched. Pausing keeps it on the
+**Watching, paused, removed.** A newly added row is watched. Pausing keeps it on the
 board but takes it out of the periodic sweep, so it costs nothing and shows its last known
 state; paused rows sink to the bottom of their section and can still be checked with the ⟳
 button. Removing takes it off the board entirely.
 
-**Filtering.** The tabs count and filter by status (failed, running, passed, other), and
-the search box and group dropdown narrow the list further. The search box takes a
-comma-separated list, which is an OR — `crud, ledger` shows both. A section disappears
-when nothing in it matches. Groups come from the GitLab namespace each repo sits in.
+**Notifications.** When a pipeline the board was watching finishes, it says so — a desktop
+notification and a short chime, naming what broke if anything did. Every row has its own
+setting, and the global one in Configuration is a ceiling over them: snoozing the board
+keeps the notifications and drops the sound, switching it off silences the lot.
 
-**Tags.** *Not switched on yet.* Repos can carry overlapping, hand-made labels —
-`lib`, `backs` and `CRUDs` at once — which filter the board across namespaces and can
-limit the sweep to what you are looking at. The store, the API and the export format
-already carry them; the interface is still being worked out, so it is off by default.
-Set `CI_DECK_TAGS=1` to try it, and expect it to change.
+Two things are worth knowing. Notifications only happen while a board tab is open, since
+there is no background worker; and no browser will play a sound until you have clicked the
+page once, so the first click of a session is what arms the chime.
+
+**Filtering.** The tabs count and filter by status (failed, running, passed, other), and
+the search box, group dropdown and tags narrow the list further. The search box takes a
+comma-separated list, which is an OR — `crud, ledger` shows both — and matches the branch
+as well as the name. A section disappears when nothing in it matches.
+
+All four live in the URL, so a reload keeps them, the back button undoes them, and a
+filtered board is something you can send to someone. None of them changes what is watched:
+the sweep still covers every watched row, and simply visits the ones on screen first.
+
+**Tags.** Repos can carry overlapping, hand-made labels — `lib`, `backs` and `CRUDs` at
+once — which filter the board across namespaces. Manage them under Configuration → Tags,
+where one pass sets a tag's whole membership; a row's own tags are editable from the row.
+Tags travel in an export.
+
+**Columns.** Drag a divider in the column header to move it, or focus the handle and use
+the arrow keys. A divider trades width between the two columns either side of it and
+nothing else: widening Stages narrows Updated by exactly as much, until Updated hits its
+floor and the divider stops. The board never changes width doing it — the row controls hold
+a locked column and the other six divide up what is left — so there is a divider between
+each pair and none on the outside edges.
+
+Widths are stored with everything else, as proportions rather than measurements, so a
+narrower window redivides the same layout instead of overflowing and the board looks the
+same in the next browser you open it in.
 
 **Sweeping.** Everything about the periodic check sits together on the right of the
 toolbar, directly above the progress bar it drives: how long the last sweep took and when
@@ -241,6 +280,12 @@ pick one, default 2 minutes — and a button to check every repo right now.
 **The connection.** The button in the top bar is both the status and the way to change it:
 it shows who you are connected as and to which host, turns amber when the instance cannot
 be reached and red when GitLab rejects the token. Clicking it opens the credentials panel.
+
+**Configuration.** The gear in the top bar opens everything that is set up rather than
+done: the connection and where its credentials came from, the sweep interval and the
+default branch, whether starting a manual job asks first, the global notification setting,
+the theme — light, dark, or whatever the system is using — and the tag manager. All of it
+is stored in the database beside the watch list.
 
 ## Configuration
 
@@ -257,7 +302,6 @@ inline (GITLAB_PAT=… ci-deck)  →  env file  →  what the UI saved
 | `GITLAB_BASE_URL` | instance root, e.g. `https://gitlab.com/` |
 | `CI_DECK_PORT` | HTTP port, default `8787`, overridden by `--port` |
 | `CI_DECK_DB` | database path, overridden by `--db` |
-| `CI_DECK_TAGS` | `1` to switch on the unfinished tag interface |
 
 The UI shows where each value came from and will not let you edit one the environment is
 dictating — otherwise a saved value would be silently ignored. A token supplied through
@@ -339,16 +383,21 @@ opens a dialog you can drop a file onto or browse for, and which offers a templa
 are not guessing at the format.
 
 The dialog reads the file with the same parser the server will use and says what is about
-to happen — how many repos it would add, how many are already on the board — before
-anything is sent. Import is additive, repos already watched are left alone, and every entry
-it skipped is listed with its reason. The paused state travels with the list. Credentials
-never do.
+to happen — how many rows it would add, how many are already on the board — before
+anything is sent. Import is additive, rows already watched are left alone, and every entry
+it skipped is listed with its reason. The paused state and the notification setting travel
+with the list. Credentials never do.
+
+An entry is a repo *and* a branch, so the same repo may appear once per branch and an
+entry that names one already watched is the only kind of duplicate. A file that says
+nothing about a branch means the board's default one, which is what older files always
+meant.
 
 Exports record the instance each project id came from. Importing a list from a different
 host re-resolves every repo by path instead of trusting ids that would point elsewhere.
 
-Tags travel with the list even while the interface is off, including ones nothing carries
-yet. A repo already on the board is not re-added, but the file's tags are merged onto it.
+Tags travel with the list, including ones nothing carries yet. A row already on the board
+is not re-added, but the file's tags are merged onto it.
 
 Hand-written files work too — an array of names is enough, and entries may give just a
 `path`:
@@ -356,7 +405,11 @@ Hand-written files work too — an array of names is enough, and entries may giv
 ```json
 {
   "tags": ["backs"],
-  "repos": ["my-service", { "path": "group/team/other-service", "ref": "develop", "tags": ["backs"] }]
+  "repos": [
+    "my-service",
+    { "path": "group/team/other-service", "ref": "main", "tags": ["backs"] },
+    { "path": "group/team/other-service", "ref": "develop", "notify": "snooze" }
+  ]
 }
 ```
 
@@ -368,10 +421,14 @@ Hand-written files work too — an array of names is enough, and entries may giv
 - **Two request lanes.** The sweep runs on a serialised lane; everything you trigger — job
   log, retry, cancel, per-row check — runs on a separate lane, so the UI stays responsive
   mid-sweep.
-- **Paused repos are skipped**, and are not counted in sweep progress.
-- **Tag scoping skips the rest**, when tags are switched on: a sweep then walks only the
-  repos carrying a selected tag, so a watch list far larger than one pass can cover stays
-  useful.
+- **Paused rows are skipped**, and are not counted in sweep progress.
+- **Filtering reorders the sweep, never shortens it.** The board tells the server which
+  rows are on screen and those go first, so narrowing shortens the wait for what you are
+  looking at — while a row you filtered out is still checked, and can still tell you it
+  broke.
+- **Branch existence is checked sparingly.** Only for rows watching something other than
+  the default branch, and at most once every five minutes, since the answer changes about
+  once in a branch's life.
 - **Jobs are cached only when they cannot change.** A finished pipeline costs one request
   per sweep; anything running, pending or manual has its jobs refetched every time,
   because GitLab does not always bump the pipeline's `updated_at` when a single job
@@ -410,8 +467,9 @@ Read this before sharing the tool.
 - **The saved token only goes to the host it was saved for.** Changing the GitLab URL asks
   for that instance's token instead of forwarding the stored one, so no single request can
   make CI Deck present your PAT somewhere new.
-- **Manual jobs are gated.** Starting one is a deploy in many pipelines, so it always asks
-  for confirmation first.
+- **Manual jobs are gated.** Starting one is a deploy in many pipelines, so it asks for
+  confirmation first. That can be turned off in Configuration; it is on by default and
+  the switch is deliberately not somewhere you meet by accident.
 - **Token hygiene.** Use a short expiry and the narrowest scope that works (`api`). Keep
   `.env` out of version control — the shipped `.gitignore` already does that.
 
@@ -423,21 +481,28 @@ Read this before sharing the tool.
 | `GET` | `/api/events` | SSE stream of board updates |
 | `PUT` | `/api/credentials` | `{ baseUrl?, token? }` — verified, then stored |
 | `DELETE` | `/api/credentials` | forget the stored token, keep the list |
-| `PUT` | `/api/settings` | `{ pollPeriodSeconds?, defaultRef?, activeTags?, scopeSweepToTags? }` |
+| `PUT` | `/api/settings` | `{ pollPeriodSeconds?, defaultRef?, confirmManualRun?, notifications?, theme?, columnWidths? }` |
+| `PUT` | `/api/focus` | `{ repos }` — row ids on screen, swept first |
+| `GET` | `/api/resolve?repo=` | look a repo up and list its branches |
 | `POST` | `/api/tags` | `{ name }` — create |
 | `PUT` \| `DELETE` | `/api/tags/:name` | rename with `{ name }`, or delete |
-| `PUT` | `/api/tags/:name/repos` | `{ repos }` — set a tag's whole membership |
+| `PUT` | `/api/tags/:name/repos` | `{ repos }` — set a tag's whole membership, by row id |
 | `POST` | `/api/sweep` | start a sweep now |
 | `POST` | `/api/repos` | `{ repo, ref? }` — name, path or pasted GitLab URL |
-| `PUT` | `/api/repos/:name/tags` | `{ tags }` — replace one repo's tags |
-| `DELETE` | `/api/repos/:name` | remove from the board |
-| `PUT` | `/api/repos/:name/watch` | `{ watched }` — pause or resume |
-| `POST` | `/api/repos/:name/refresh` | check this repo now |
-| `GET` | `/api/repos/:name/jobs/:jobId/log` | raw job trace |
-| `POST` | `/api/repos/:name/jobs/:jobId/retry` \| `/cancel` \| `/play` | job actions |
-| `POST` | `/api/repos/:name/pipeline/retry` \| `/cancel` | pipeline actions |
+| `PUT` | `/api/repos/:id/tags` | `{ tags }` — replace one row's tags |
+| `DELETE` | `/api/repos/:id` | remove from the board |
+| `PUT` | `/api/repos/:id/watch` | `{ watched }` — pause or resume |
+| `PUT` | `/api/repos/:id/notify` | `{ notify }` — `on`, `snooze` or `off` |
+| `POST` | `/api/repos/:id/refresh` | check this row now |
+| `GET` | `/api/repos/:id/jobs/:jobId/log` | raw job trace |
+| `POST` | `/api/repos/:id/jobs/:jobId/retry` \| `/cancel` \| `/play` | job actions |
+| `POST` | `/api/repos/:id/stage/:action` | `{ stage }` — the same three, over a whole stage |
+| `POST` | `/api/repos/:id/pipeline/retry` \| `/cancel` | pipeline actions |
 | `GET` | `/api/export` | download the list, for the instance the board is on |
 | `POST` | `/api/import` | add repos from an uploaded list, and apply the settings it carries |
+
+A row is identified by an integer id, not by name: the same repo can be on the board once
+per branch, and a name is shared between instances besides.
 
 ## Contributing
 

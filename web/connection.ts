@@ -57,7 +57,7 @@ export function connectionButton(getMeta: () => AppMeta | null): ConnectionButto
         element.classList.remove(...STATE_CLASSES);
         element.classList.add(state);
         label.textContent = text;
-        element.title = title;
+        element.setAttribute('data-tip', title);
         element.setAttribute('aria-label', title);
     };
 

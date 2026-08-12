@@ -5,18 +5,24 @@
  * and the result cannot drift apart.
  */
 
-/** 2 added tags. Version 1 files still import; they simply carry none. */
-export const EXPORT_VERSION = 2;
+/**
+ * 2 added tags; 3 added the notification setting, and made a repo's identity
+ * name-plus-branch rather than name alone. Older files still import: the branch
+ * simply falls back to the board's default, which is what they always meant.
+ */
+export const EXPORT_VERSION = 3;
 
 export interface ExportedRepo {
     name: string;
     projectId?: number;
     path?: string | null;
+    /** Part of the identity: the same repo may appear once per branch watched. */
     ref?: string;
     group?: string;
     /** Instance the id was resolved against; ids do not transfer between hosts. */
     baseUrl?: string;
     watched?: boolean;
+    notify?: string;
     tags?: string[];
 }
 
@@ -78,6 +84,9 @@ export function parseExportFile(raw: unknown): ExportedRepo[] {
                 ? { baseUrl: candidate.baseUrl.trim() }
                 : {}),
             ...(typeof candidate.watched === 'boolean' ? { watched: candidate.watched } : {}),
+            ...(candidate.notify === 'on' || candidate.notify === 'snooze' || candidate.notify === 'off'
+                ? { notify: candidate.notify }
+                : {}),
             ...(Array.isArray(candidate.tags) ? { tags: normaliseTags(candidate.tags) } : {}),
         });
     }

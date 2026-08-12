@@ -1,4 +1,4 @@
-import type { AppMeta, AppState, RepoView, ServerEvent, Settings, SweepInfo, TagView } from '../shared/types.ts';
+import type { AppMeta, AppState, NotificationEvent, RepoView, ServerEvent, Settings, SweepInfo, TagView } from '../shared/types.ts';
 import type { RepoRecord } from '../store/watch-store.ts';
 
 export type Listener = (event: ServerEvent) => void;
@@ -30,12 +30,15 @@ export function projectUrl(path: string | null, gitlabBaseUrl: string): string |
 /** A freshly loaded row: known identity, nothing fetched from GitLab yet. */
 export function repoViewFromRecord(record: RepoRecord, gitlabBaseUrl: string, tags: string[] = []): RepoView {
     return {
+        id: record.id,
         name: record.name,
         group: record.group,
         tags,
         projectId: record.projectId,
         ref: record.ref,
         watched: record.watched,
+        notify: record.notify,
+        branchMissing: record.branchMissing,
         webUrl: projectUrl(record.path, gitlabBaseUrl),
         health: 'unknown',
         pipeline: null,
@@ -51,11 +54,13 @@ export function repoViewFromRecord(record: RepoRecord, gitlabBaseUrl: string, ta
  * the UI updates repo by repo as the sweep walks the watch list.
  */
 export class AppStore {
-    private readonly repos = new Map<string, RepoView>();
-    private order: string[] = [];
+    private readonly repos = new Map<number, RepoView>();
+    private order: number[] = [];
     private readonly listeners = new Set<Listener>();
     private tags: TagView[] = [];
     private settings: Settings;
+    /** Rows the board is currently showing, in the order they appear on it. */
+    private focus: number[] = [];
     private sweep: SweepInfo = {
         running: false,
         index: 0,
@@ -75,7 +80,7 @@ export class AppStore {
 
     snapshot(): AppState {
         return {
-            repos: this.order.map((name) => this.repos.get(name)!),
+            repos: this.order.map((id) => this.repos.get(id)!),
             tags: this.tags.map((tag) => ({ ...tag })),
             settings: { ...this.settings },
             sweep: { ...this.sweep },
@@ -98,24 +103,24 @@ export class AppStore {
         }
     }
 
-    get repoNames(): string[] {
+    get repoIds(): number[] {
         return [...this.order];
     }
 
-    getRepo(name: string): RepoView | undefined {
-        return this.repos.get(name);
+    getRepo(id: number): RepoView | undefined {
+        return this.repos.get(id);
     }
 
     setRepos(views: RepoView[]): void {
         this.repos.clear();
-        this.order = views.map((view) => view.name);
-        for (const view of views) this.repos.set(view.name, view);
+        this.order = views.map((view) => view.id);
+        for (const view of views) this.repos.set(view.id, view);
         this.emit({ type: 'repos', repos: this.snapshot().repos });
     }
 
     addRepo(view: RepoView): void {
-        this.repos.set(view.name, view);
-        if (!this.order.includes(view.name)) this.order.push(view.name);
+        this.repos.set(view.id, view);
+        if (!this.order.includes(view.id)) this.order.push(view.id);
         this.emit({ type: 'repo', repo: view });
     }
 
@@ -123,25 +128,26 @@ export class AppStore {
      * Changes row order only. Views keep whatever GitLab data they already hold,
      * so re-sorting after a pause never blanks the board.
      */
-    reorder(names: string[]): void {
-        const known = names.filter((name) => this.repos.has(name));
-        const missing = this.order.filter((name) => !known.includes(name));
+    reorder(ids: number[]): void {
+        const known = ids.filter((id) => this.repos.has(id));
+        const missing = this.order.filter((id) => !known.includes(id));
         this.order = [...known, ...missing];
         this.emit({ type: 'repos', repos: this.snapshot().repos });
     }
 
-    removeRepo(name: string): boolean {
-        if (!this.repos.delete(name)) return false;
-        this.order = this.order.filter((entry) => entry !== name);
+    removeRepo(id: number): boolean {
+        if (!this.repos.delete(id)) return false;
+        this.order = this.order.filter((entry) => entry !== id);
+        this.focus = this.focus.filter((entry) => entry !== id);
         this.emit({ type: 'repos', repos: this.snapshot().repos });
         return true;
     }
 
-    patchRepo(name: string, patch: Partial<RepoView>): RepoView | undefined {
-        const current = this.repos.get(name);
+    patchRepo(id: number, patch: Partial<RepoView>): RepoView | undefined {
+        const current = this.repos.get(id);
         if (!current) return undefined;
         const next = { ...current, ...patch };
-        this.repos.set(name, next);
+        this.repos.set(id, next);
         this.emit({ type: 'repo', repo: next });
         return next;
     }
@@ -157,9 +163,9 @@ export class AppStore {
      * the pipeline, stages and health that only GitLab can supply, so renaming a
      * tag would blank the whole board until the next sweep refilled it.
      */
-    setRepoTags(byRepo: Map<string, string[]>): void {
-        for (const [name, view] of this.repos) {
-            this.repos.set(name, { ...view, tags: byRepo.get(name) ?? [] });
+    setRepoTags(byRepo: Map<number, string[]>): void {
+        for (const [id, view] of this.repos) {
+            this.repos.set(id, { ...view, tags: byRepo.get(id) ?? [] });
         }
         this.emit({ type: 'repos', repos: this.snapshot().repos });
     }
@@ -169,11 +175,22 @@ export class AppStore {
         this.emit({ type: 'tags', tags: this.getTags() });
     }
 
-    /** Names carrying at least one of `tags`; empty means no restriction. */
-    reposWithAnyTag(tags: string[]): string[] {
-        if (tags.length === 0) return [...this.order];
-        const wanted = new Set(tags);
-        return this.order.filter((name) => this.repos.get(name)?.tags.some((tag) => wanted.has(tag)));
+    /**
+     * What the board is showing, so the sweep can visit those rows first.
+     *
+     * Deliberately an ordering and not a filter. Skipping the rest would make a
+     * search box quietly decide which repos still notify you, and the whole point
+     * of watching a repo is that you find out without looking at it.
+     */
+    setFocus(ids: number[]): void {
+        this.focus = ids.filter((id) => this.repos.has(id));
+    }
+
+    /** Every repo, with the ones on screen at the front. */
+    sweepOrder(): number[] {
+        if (this.focus.length === 0) return [...this.order];
+        const first = new Set(this.focus);
+        return [...this.focus, ...this.order.filter((id) => !first.has(id))];
     }
 
     getSettings(): Settings {
@@ -194,6 +211,10 @@ export class AppStore {
     setSweep(patch: Partial<SweepInfo>): void {
         this.sweep = { ...this.sweep, ...patch };
         this.emit({ type: 'sweep', sweep: { ...this.sweep } });
+    }
+
+    notify(notification: NotificationEvent): void {
+        this.emit({ type: 'notify', notification });
     }
 
     /** GitLab rejected the token, which is also the end of polling until it changes. */

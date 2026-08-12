@@ -2,6 +2,29 @@ type Child = Node | string | number | null | undefined | false;
 
 type Props = Record<string, unknown>;
 
+/**
+ * Sets a prop as a property where the DOM has one, and as an attribute where it
+ * does not.
+ *
+ * Two ways the old blanket assignment went wrong, both silent. A name the element
+ * has no property for — `tabindex`, `for` — became an expando that nothing reads,
+ * so the pre was never focusable and no label was ever tied to its input. And a
+ * property that is a getter only — `input.list` — throws in a module, which runs
+ * in strict mode: that one took out the whole Add repo dialog, landing between
+ * opening the modal and filling it and leaving an empty shell on screen.
+ */
+function assign(node: HTMLElement, key: string, value: unknown): void {
+    if (key in node) {
+        try {
+            (node as unknown as Record<string, unknown>)[key] = value;
+            return;
+        } catch {
+            // Getter-only. The attribute behind it is what was meant either way.
+        }
+    }
+    node.setAttribute(key, String(value));
+}
+
 /** Tiny element factory — keeps rendering declarative without a framework. */
 export function h<K extends keyof HTMLElementTagNameMap>(
     tag: K,
@@ -20,7 +43,7 @@ export function h<K extends keyof HTMLElementTagNameMap>(
         else if (key.startsWith('on') && typeof value === 'function') {
             node.addEventListener(key.slice(2).toLowerCase(), value as EventListener);
         } else if (key.includes('-')) node.setAttribute(key, String(value));
-        else (node as unknown as Record<string, unknown>)[key] = value;
+        else assign(node, key, value);
     }
 
     appendChildren(node, children);
@@ -70,6 +93,13 @@ export function formatRelative(iso: string | null, now = Date.now()): string {
 
     const days = Math.floor(hours / 24);
     return days < 30 ? `${days}d ago` : new Date(then).toLocaleDateString();
+}
+
+/** The whole moment, in the reader's own locale — what "23m ago" is hiding. */
+export function formatAbsolute(iso: string | null): string | null {
+    if (!iso) return null;
+    const time = Date.parse(iso);
+    return Number.isNaN(time) ? null : new Date(time).toLocaleString();
 }
 
 /** Hours and minutes only: seconds are noise on a row that says "3m ago" above. */
