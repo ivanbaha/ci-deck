@@ -186,13 +186,16 @@ working directory.
 
 ## Using the board
 
-Each row is one repo on one branch, showing its most recent pipeline there: status badge,
-pipeline number, commit, the stage bubbles, and when it was last updated and last checked.
-Rows are grouped into sections by GitLab namespace, each section counting its rows and its
-failures. The top bar, the column header and the current section stay put as you scroll.
+Each row is one repo on one branch — the name and its branch together, its tags under them
+— showing the most recent pipeline there: status badge, pipeline number, commit, the stage
+bubbles, and when it was last updated and last checked. Rows are grouped into sections by
+GitLab namespace, each section counting its rows and its failures. The top bar, the column
+header and the current section stay put as you scroll.
 
-A red row names the jobs that failed next to the commit, so the usual question does not
-cost a click.
+Hovering the status badge of a red row lists every job that failed, so the usual question
+costs a hover rather than two clicks. Most things on a row have something to add that way:
+the whole branch name where it was clipped, a tag's description, what a stage bubble is
+hiding, the exact moment behind "23m ago".
 
 **Branches.** A repo can be watched on as many branches as you like — `main` and the
 release branch, say — and each is its own row. Adding one looks the repo up as you type
@@ -248,18 +251,27 @@ there is no background worker; and no browser will play a sound until you have c
 page once, so the first click of a session is what arms the chime.
 
 **Filtering.** The tabs count and filter by status (failed, running, passed, other), and
-the search box, group dropdown and tags narrow the list further. The search box takes a
-comma-separated list, which is an OR — `crud, ledger` shows both — and matches the branch
-as well as the name. A section disappears when nothing in it matches.
+the toolbar under them narrows further: the search box, the group dropdown, and the tag
+chips beside them. The search box takes a comma-separated list, which is an OR — `crud,
+ledger` shows both — and matches the branch as well as the name. A section disappears when
+nothing in it matches. Once a search or a group has narrowed the board, **Save as tag**
+turns what is on screen into a tag, so a set worth returning to is one click rather than
+sixty.
 
 All four live in the URL, so a reload keeps them, the back button undoes them, and a
 filtered board is something you can send to someone. None of them changes what is watched:
 the sweep still covers every watched row, and simply visits the ones on screen first.
 
 **Tags.** Repos can carry overlapping, hand-made labels — `lib`, `backs` and `CRUDs` at
-once — which filter the board across namespaces. Manage them under Configuration → Tags,
-where one pass sets a tag's whole membership; a row's own tags are editable from the row.
-Tags travel in an export.
+once — which filter the board across namespaces. A tag has a name, an optional description
+and an optional colour, which its chips wear on every row that carries it: quiet on a row
+you are not looking at, solid in the toolbar while it is filtering.
+
+Tags are made and applied under **Configuration → Tags**: the form for one is behind the
+**+** beside the list or the pencil on a tag, and ticking a repo saves it immediately, so
+one pass sets a tag's whole membership. A repo can also be given a tag as it is added.
+Rows themselves are read-only about it — the chips on a row say what it carries and nothing
+more. Tags travel in an export, colours and descriptions included.
 
 **Columns.** Drag a divider in the column header to move it, or focus the handle and use
 the arrow keys. A divider trades width between the two columns either side of it and
@@ -279,7 +291,11 @@ pick one, default 2 minutes — and a button to check every repo right now.
 
 **The connection.** The button in the top bar is both the status and the way to change it:
 it shows who you are connected as and to which host, turns amber when the instance cannot
-be reached and red when GitLab rejects the token. Clicking it opens the credentials panel.
+be reached and red when GitLab rejects the token. Clicking it opens the credentials panel,
+where **Test** tries a URL and token against the instance and stores neither — the same
+check the save does, without committing the board to the answer. Changing the URL there
+switches instances, which is [a watch list of its own](#one-watch-list-per-instance) and
+needs that instance's own token; the dialog says so as you type.
 
 **Configuration.** The gear in the top bar opens everything that is set up rather than
 done: the connection and where its credentials came from, the sweep interval and the
@@ -372,9 +388,28 @@ The token itself is not in that file wherever the platform offers something bett
 A DPAPI blob only decrypts for the user and machine that wrote it, so a copied database
 asks for the token again rather than failing mysteriously.
 
+### One watch list per instance
+
 Each repo records the instance it was resolved against, because GitLab project ids are
 per-instance. Point CI Deck at a different host and you get that host's list, not a board
 of rows pointing at unrelated projects.
+
+That makes switching hosts a **view swap between separate watch lists, not a migration**:
+
+- A host you have never used starts empty. Nothing was deleted — the rows you had are
+  still in the database, filed under the host they belong to.
+- Point the board back and they all return, with their branches, tags, paused state and
+  notification settings intact.
+- Tags belong to an instance too, so the tag bar and Configuration → Tags change with the
+  rows.
+- A saved token is only ever sent to the host it was saved for, so switching means
+  entering that instance's own token. The connection dialog says so rather than silently
+  reusing the one you had.
+- Nothing is re-resolved across the switch. A project id from one instance means a
+  different project on another, which is exactly why the lists are kept apart.
+
+To watch two instances at once, run a second board against its own database
+(`--db ./other.db --port 8788`).
 
 ## Sharing a watch list
 
@@ -396,15 +431,20 @@ meant.
 Exports record the instance each project id came from. Importing a list from a different
 host re-resolves every repo by path instead of trusting ids that would point elsewhere.
 
-Tags travel with the list, including ones nothing carries yet. A row already on the board
-is not re-added, but the file's tags are merged onto it.
+Tags travel with the list, including ones nothing carries yet, and including what each one
+looks like. A row already on the board is not re-added, but the file's tags are merged onto
+it. A tag that already exists keeps the description and colour it has here — the file only
+fills in what is blank, since an import adds to a board rather than taking it over.
 
 Hand-written files work too — an array of names is enough, and entries may give just a
-`path`:
+`path`. A tag may be named on its own or described in full:
 
 ```json
 {
-  "tags": ["backs"],
+  "tags": [
+    "backs",
+    { "name": "release-blocking", "description": "A red row here stops the release", "color": "#d1392b" }
+  ],
   "repos": [
     "my-service",
     { "path": "group/team/other-service", "ref": "main", "tags": ["backs"] },
@@ -466,7 +506,8 @@ Read this before sharing the tool.
   because names arrive by being declared, never by resolving here.
 - **The saved token only goes to the host it was saved for.** Changing the GitLab URL asks
   for that instance's token instead of forwarding the stored one, so no single request can
-  make CI Deck present your PAT somewhere new.
+  make CI Deck present your PAT somewhere new. Testing a connection is held to the same
+  rule as saving one — it is the same check, so it is no way around it.
 - **Manual jobs are gated.** Starting one is a deploy in many pipelines, so it asks for
   confirmation first. That can be turned off in Configuration; it is on by default and
   the switch is deliberately not somewhere you meet by accident.
@@ -480,12 +521,13 @@ Read this before sharing the tool.
 | `GET` | `/api/state` | full board snapshot, including credential provenance |
 | `GET` | `/api/events` | SSE stream of board updates |
 | `PUT` | `/api/credentials` | `{ baseUrl?, token? }` — verified, then stored |
+| `POST` | `/api/credentials/test` | `{ baseUrl?, token? }` — verified and nothing else |
 | `DELETE` | `/api/credentials` | forget the stored token, keep the list |
 | `PUT` | `/api/settings` | `{ pollPeriodSeconds?, defaultRef?, confirmManualRun?, notifications?, theme?, columnWidths? }` |
 | `PUT` | `/api/focus` | `{ repos }` — row ids on screen, swept first |
 | `GET` | `/api/resolve?repo=` | look a repo up and list its branches |
-| `POST` | `/api/tags` | `{ name }` — create |
-| `PUT` \| `DELETE` | `/api/tags/:name` | rename with `{ name }`, or delete |
+| `POST` | `/api/tags` | `{ name, description?, color? }` — create |
+| `PUT` \| `DELETE` | `/api/tags/:name` | change `{ name?, description?, color? }`, or delete |
 | `PUT` | `/api/tags/:name/repos` | `{ repos }` — set a tag's whole membership, by row id |
 | `POST` | `/api/sweep` | start a sweep now |
 | `POST` | `/api/repos` | `{ repo, ref? }` — name, path or pasted GitLab URL |

@@ -1,5 +1,5 @@
 import type { AppMeta } from '../src/shared/types.ts';
-import { h } from './dom.ts';
+import { h, hostOf } from './dom.ts';
 import { icon } from './icons.ts';
 import { openSetup } from './setup.ts';
 
@@ -9,15 +9,6 @@ export interface ConnectionButton {
 }
 
 const STATE_CLASSES = ['conn-ok', 'conn-warn', 'conn-bad', 'conn-none'];
-
-function hostOf(baseUrl: string | null): string {
-    if (!baseUrl) return '';
-    try {
-        return new URL(baseUrl).host;
-    } catch {
-        return baseUrl;
-    }
-}
 
 /**
  * The connection is one thing, so it gets one control: who you are connected as,

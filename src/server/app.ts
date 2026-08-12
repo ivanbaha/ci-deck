@@ -237,6 +237,19 @@ export function createServeOptions(deps: AppDeps) {
                 }),
             },
 
+            /**
+             * "Do these work?" — the same probe the save does, without the save.
+             * A separate route rather than a flag on the one above, so nothing
+             * that stores a token can be reached by asking to test one.
+             */
+            '/api/credentials/test': {
+                POST: route(deps, async (request) => {
+                    const body = await readJson<{ baseUrl?: string; token?: string }>(request);
+                    const result = await runtime.test({ baseUrl: body.baseUrl, token: body.token });
+                    return json(result);
+                }),
+            },
+
             '/api/settings': {
                 PUT: route(deps, async (request) => {
                     const body = await readJson<{

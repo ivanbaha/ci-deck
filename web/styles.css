@@ -1791,6 +1791,13 @@ body.is-resizing {
     width: 100%;
 }
 
+/* Not an error — a consequence. Amber, like the flags on a row that say a thing
+   is out of the ordinary rather than wrong. */
+.form-warn {
+    color: var(--orange);
+    font-size: 12px;
+}
+
 .form-error {
     color: var(--red);
     font-size: 13px;

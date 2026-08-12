@@ -43,3 +43,36 @@ describe('Runtime.configure', () => {
             .rejects.toThrow(/project page/);
     });
 });
+
+/**
+ * Testing sends the token exactly where saving would, so it has to refuse in
+ * exactly the same places. A check that could be pointed anywhere would be a way
+ * around the rule above rather than a convenience.
+ */
+describe('Runtime.test', () => {
+    it('refuses to send a stored token to a different instance', async () => {
+        const runtime = runtimeWithStoredToken();
+
+        const attempt = runtime.test({ baseUrl: 'https://attacker.example/' });
+
+        await expect(attempt).rejects.toBeInstanceOf(ConfigureError);
+        await expect(attempt).rejects.toThrow(/only ever sent to https:\/\/gitlab\.example\.com\//);
+    });
+
+    it('rejects a URL that is not an instance root', async () => {
+        const runtime = runtimeWithStoredToken();
+
+        await expect(runtime.test({ baseUrl: 'https://gitlab.example.com/g/p/-/pipelines' }))
+            .rejects.toThrow(/project page/);
+    });
+
+    it('asks for a token when there is none to fall back on', async () => {
+        const runtime = new Runtime({
+            watchStore: WatchStore.memory(),
+            secrets: new Secrets(new PlaintextProvider(), new PlaintextProvider()),
+            layers: { inline: {}, file: {} },
+        });
+
+        await expect(runtime.test({ baseUrl: HOST })).rejects.toThrow(/access token is required/);
+    });
+});

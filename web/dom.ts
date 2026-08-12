@@ -67,6 +67,16 @@ export function byId<T extends HTMLElement>(id: string): T {
     return node as T;
 }
 
+/** The host of an instance URL, for the places that name it rather than link it. */
+export function hostOf(baseUrl: string | null): string {
+    if (!baseUrl) return '';
+    try {
+        return new URL(baseUrl).host;
+    } catch {
+        return baseUrl;
+    }
+}
+
 export function formatDuration(seconds: number | null): string {
     if (seconds === null || !Number.isFinite(seconds) || seconds < 0) return '';
     const total = Math.round(seconds);

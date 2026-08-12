@@ -8,6 +8,8 @@ versions may still change behaviour.
 
 ## [Unreleased]
 
+## [0.2.0] — 2026-08-12
+
 ### Added
 
 - **A repo can be watched on several branches at once.** A row is now a repo *and* a
@@ -52,6 +54,26 @@ versions may still change behaviour.
 - **An import applies the settings the file carries**, and the dialog names them before you
   press the button — a refresh interval that moves on its own is a mystery, not a feature.
   A file that says nothing about them changes nothing.
+- **A tag has a description and a colour.** Both optional, both set in one form behind the
+  **+** or the pencil in Configuration → Tags, from ten swatches, a colour well or a hex
+  code, with a live preview of the chip it will produce. A coloured tag wears it wherever
+  it appears: quiet on a row you are not looking at, and solid in the toolbar while it is
+  filtering — in white or near-black text, whichever the colour can actually carry.
+- **Ticking a repo in the tag manager saves it.** The Apply button is gone, along with the
+  pane you could close having changed nothing you thought you had changed. Writes are
+  queued one at a time, since each one sends the tag's whole membership.
+- **Tags moved into the toolbar**, beside the search and group filters rather than on a row
+  of their own. The chips size themselves: full size on one line where they fit, smaller
+  over two where they do not, remeasured whenever the bar's width changes.
+- **A tooltip of the board's own**, replacing every `title` attribute in it. It arrives
+  without the second of dead air, holds more than one line — the whole list of failed jobs
+  rather than the first and a count — and reaches a disabled control, which a mouse event
+  cannot.
+- **Test a connection without saving it.** The credentials panel gained a **Test** button
+  and the server a `POST /api/credentials/test`: the same probe the save runs, storing
+  nothing, re-pointing nothing and restarting nothing. It refuses in exactly the same
+  places the save does, so it is not a way around the rule that a stored token is only ever
+  sent to the host it was stored for.
 
 - **Standalone executables.** Every release now carries one per platform — macOS, Linux
   and Windows — each with the board's assets and the Bun runtime compiled in, so the tool
@@ -108,9 +130,22 @@ versions may still change behaviour.
   `repos` keyed by `id` with `UNIQUE(base_url, name, ref)`, and tag memberships carried
   onto the new keys. Nothing is lost, but the routes moved from `/api/repos/:name` to
   `/api/repos/:id`.
-- **The export format is version 3**, adding a per-row notification setting and treating
-  the branch as part of a row's identity. Older files still import; an entry that names no
-  branch means the board's default one, which is what it always meant.
+- **The export format is version 4.** 3 added a per-row notification setting and treated
+  the branch as part of a row's identity; 4 gives a tag its description and colour, so the
+  top-level `tags` list holds objects rather than bare names. Older files still import — a
+  list of names reads as tags with neither field, and an entry that names no branch means
+  the board's default one, which is what it always meant. An import fills in a tag's blanks
+  and never repaints one this board has already given a colour to.
+- **Tags are assigned in two places, and a row is not one of them.** The invisible control
+  on a row that opened a per-repo tag dialog is gone, along with the dialog; a row's chips
+  now say what it carries and nothing more. Tags are applied as a repo is added, or under
+  Configuration → Tags, which is also where they are made — the Add repo dialog offers the
+  tags that exist rather than creating one from whatever was typed.
+- **The branch sits beside the repo name**, leaving the line under it to the tags. Both
+  clip, but the branch gives up room three times faster, and the whole ref is a hover away.
+- **Why a row is red moved onto its status badge.** The `lint +8 failed` text beside the
+  commit is now a hover on the badge listing every failed job by name, which the row had no
+  width for.
 - **A warning outranks a manual job** when a stage's status is worked out. Something did
   fail there, and a stage that also held a manual job was calling itself manual and showing
   no sign of the failure at all.
@@ -128,12 +163,11 @@ versions may still change behaviour.
 
 ### Fixed
 
-- **The Add repo dialog opened empty**, and so did the per-row tag editor. Both build a tag
-  input, whose `list` attribute was being set as a property — `HTMLInputElement.list` is a
-  getter, and a module runs in strict mode, so the assignment threw between opening the
-  dialog and filling it. The element factory now sets an attribute wherever there is no
-  property to set, which also fixes labels that were never tied to their inputs and a log
-  view that was never focusable.
+- **The Add repo dialog opened empty.** Its tag input's `list` attribute was being set as a
+  property — `HTMLInputElement.list` is a getter, and a module runs in strict mode, so the
+  assignment threw between opening the dialog and filling it. The element factory now sets
+  an attribute wherever there is no property to set, which also fixes labels that were
+  never tied to their inputs and a log view that was never focusable.
 - Asking for a sweep after GitLab rejected the token reported that one had started. Polling
   stops for good in that state and cannot be restarted without new credentials, so the
   request is now refused and says why. `/api/state` no longer reports such a board as
@@ -215,6 +249,7 @@ Bootstrap pre-release, published under the `beta` tag. Functionally identical to
 it existed so that npm trusted publishing could be configured against a package that
 already exists. See the `0.1.0` entry for what it contains.
 
-[Unreleased]: https://github.com/ivanbaha/ci-deck/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/ivanbaha/ci-deck/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/ivanbaha/ci-deck/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/ivanbaha/ci-deck/releases/tag/v0.1.0
 [0.1.0-b1]: https://github.com/ivanbaha/ci-deck/releases/tag/v0.1.0-b1

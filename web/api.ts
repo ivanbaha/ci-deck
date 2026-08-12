@@ -92,6 +92,10 @@ export const api = {
             body,
         ),
 
+    /** Tries them against the instance and stores nothing either way. */
+    testCredentials: (body: { baseUrl?: string; token?: string }) =>
+        json<{ username: string; baseUrl: string }>('/api/credentials/test', 'POST', body),
+
     forgetCredentials: () => request<{ forgotten: boolean }>('/api/credentials', { method: 'DELETE' }),
 
     importList: (payload: unknown) =>

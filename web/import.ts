@@ -1,5 +1,5 @@
 import type { RepoView } from '../src/shared/types.ts';
-import { parseExportFile, parseExportSettings } from '../src/shared/watchlist.ts';
+import { EXPORT_VERSION, parseExportFile, parseExportSettings } from '../src/shared/watchlist.ts';
 import { api } from './api.ts';
 import { button } from './button.ts';
 import { formatDuration, h } from './dom.ts';
@@ -7,15 +7,25 @@ import { icon } from './icons.ts';
 import { openModal } from './modal.ts';
 import { toastInfo } from './toast.ts';
 
-/** Mirrors what `GET /api/export` writes, minus the ids a fresh list cannot know. */
-const TEMPLATE = {
-    version: 3,
+/**
+ * Mirrors what `GET /api/export` writes, minus the ids a fresh list cannot know.
+ *
+ * The version comes from the shared module rather than a number typed here: a
+ * template that teaches last year's format is worse than no template.
+ */
+export const TEMPLATE = {
+    version: EXPORT_VERSION,
     settings: { pollPeriodSeconds: 120, defaultRef: 'main' },
+    // A tag is a name, or a name with what it is for and what it looks like.
+    tags: [
+        'backs',
+        { name: 'release-blocking', description: 'A red row here stops the release', color: '#d1392b' },
+    ],
     repos: [
         'my-service',
         // The same repo twice, on two branches — one row each, which is what makes
         // `name` plus `ref` the thing a file is keyed by rather than `name` alone.
-        { name: 'other-service', path: 'group/team/other-service', ref: 'main' },
+        { name: 'other-service', path: 'group/team/other-service', ref: 'main', tags: ['backs'] },
         { name: 'other-service', path: 'group/team/other-service', ref: 'develop', notify: 'snooze' },
         { name: 'paused-service', path: 'group/team/paused-service', watched: false },
     ],
