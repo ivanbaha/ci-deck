@@ -1,5 +1,5 @@
 import type { RepoView } from '../src/shared/types.ts';
-import { parseExportFile, parseExportSettings } from '../src/shared/watchlist.ts';
+import { EXPORT_VERSION, parseExportFile, parseExportSettings } from '../src/shared/watchlist.ts';
 import { api } from './api.ts';
 import { button } from './button.ts';
 import { formatDuration, h } from './dom.ts';
@@ -7,20 +7,33 @@ import { icon } from './icons.ts';
 import { openModal } from './modal.ts';
 import { toastInfo } from './toast.ts';
 
-/** Mirrors what `GET /api/export` writes, minus the ids a fresh list cannot know. */
-const TEMPLATE = {
-    version: 1,
+/**
+ * Mirrors what `GET /api/export` writes, minus the ids a fresh list cannot know.
+ *
+ * The version comes from the shared module rather than a number typed here: a
+ * template that teaches last year's format is worse than no template.
+ */
+export const TEMPLATE = {
+    version: EXPORT_VERSION,
     settings: { pollPeriodSeconds: 120, defaultRef: 'main' },
+    // A tag is a name, or a name with what it is for and what it looks like.
+    tags: [
+        'backs',
+        { name: 'release-blocking', description: 'A red row here stops the release', color: '#d1392b' },
+    ],
     repos: [
         'my-service',
-        { name: 'other-service', path: 'group/team/other-service', ref: 'develop' },
+        // The same repo twice, on two branches — one row each, which is what makes
+        // `name` plus `ref` the thing a file is keyed by rather than `name` alone.
+        { name: 'other-service', path: 'group/team/other-service', ref: 'main', tags: ['backs'] },
+        { name: 'other-service', path: 'group/team/other-service', ref: 'develop', notify: 'snooze' },
         { name: 'paused-service', path: 'group/team/paused-service', watched: false },
     ],
 };
 
 interface Parsed {
     payload: unknown;
-    names: string[];
+    rows: string[];
     fresh: string[];
     known: string[];
     /** What the file would change besides the list itself. */
@@ -31,11 +44,14 @@ interface Parsed {
  * Reads a list with the parser the server will run on it, so the preview cannot
  * drift from the result. The board already knows what is watched, so working out
  * what is new needs no extra endpoint.
+ *
+ * A row is a repo and a branch, so an entry naming a branch already watched is
+ * the duplicate — and the same repo on a different branch is not one.
  */
-function parse(text: string, watched: RepoView[]): Parsed {
+function parse(text: string, watched: RepoView[], defaultRef: string): Parsed {
     const payload = JSON.parse(text) as unknown;
-    const names = parseExportFile(payload).map((entry) => entry.name);
-    const onBoard = new Set(watched.map((repo) => repo.name));
+    const rows = parseExportFile(payload).map((entry) => `${entry.name} · ${entry.ref?.trim() || defaultRef}`);
+    const onBoard = new Set(watched.map((repo) => `${repo.name} · ${repo.ref}`));
 
     // An import applies the settings a file carries. Said here, before the button
     // is pressed: a refresh interval that moves on its own is a mystery.
@@ -43,9 +59,9 @@ function parse(text: string, watched: RepoView[]): Parsed {
 
     return {
         payload,
-        names,
-        fresh: names.filter((name) => !onBoard.has(name)),
-        known: names.filter((name) => onBoard.has(name)),
+        rows,
+        fresh: rows.filter((row) => !onBoard.has(row)),
+        known: rows.filter((row) => onBoard.has(row)),
         settings: [
             settings.pollPeriodSeconds !== undefined
                 ? `refresh every ${formatDuration(settings.pollPeriodSeconds)}`
@@ -71,7 +87,11 @@ function downloadTemplate(): void {
  * the file should contain, no idea what was about to happen, and reported failures
  * as three toasts with the rest dropped — useless for a list of eighty repos.
  */
-export function openImportDialog(watched: RepoView[], onImported: () => void): void {
+export function openImportDialog(
+    watched: RepoView[],
+    defaultRef: string,
+    onImported: () => void,
+): void {
     const modal = openModal({ title: ['Import a watch list'], small: true });
 
     const fileInput = h('input', { type: 'file', accept: 'application/json,.json', hidden: true });
@@ -102,7 +122,7 @@ export function openImportDialog(watched: RepoView[], onImported: () => void): v
         start.disabled = true;
 
         try {
-            parsed = parse(await file.text(), watched);
+            parsed = parse(await file.text(), watched, defaultRef);
         } catch (failure) {
             showSummary([]);
             error.textContent = failure instanceof SyntaxError
@@ -111,7 +131,7 @@ export function openImportDialog(watched: RepoView[], onImported: () => void): v
             return;
         }
 
-        if (parsed.names.length === 0) {
+        if (parsed.rows.length === 0) {
             showSummary([]);
             error.textContent = `${file.name} has no repos in it. Download the template to see the shape.`;
             return;
@@ -120,7 +140,7 @@ export function openImportDialog(watched: RepoView[], onImported: () => void): v
         const { fresh, known } = parsed;
         showSummary([
             h('div', { class: 'import-file' }, icon('import', 16), h('span', { text: file.name })),
-            h('div', {}, h('strong', { text: `${fresh.length}` }), ` repo${fresh.length === 1 ? '' : 's'} to add`),
+            h('div', {}, h('strong', { text: `${fresh.length}` }), ` row${fresh.length === 1 ? '' : 's'} to add`),
             known.length > 0
                 ? h('div', { class: 'hint', text: `${known.length} already on the board, left alone` })
                 : null,
@@ -140,7 +160,7 @@ export function openImportDialog(watched: RepoView[], onImported: () => void): v
 
         try {
             const { added, skipped } = await api.importList(parsed.payload);
-            toastInfo(`Imported ${added.length} repo${added.length === 1 ? '' : 's'}`);
+            toastInfo(`Imported ${added.length} row${added.length === 1 ? '' : 's'}`);
             onImported();
 
             if (skipped.length === 0) {

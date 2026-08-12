@@ -1,6 +1,6 @@
 {
     "name": "ci-deck",
-    "version": "0.1.0",
+    "version": "0.2.0",
     "description": "Watch and control GitLab pipelines for many repos on one page",
     "author": "Ivan Baha",
     "license": "Apache-2.0",

@@ -1,4 +1,13 @@
-import type { AppState, RepoView, Settings, TagView } from '../src/shared/types.ts';
+import type {
+    AppState,
+    ColumnKey,
+    NotifyMode,
+    RepoCandidate,
+    RepoView,
+    Settings,
+    TagView,
+    ThemePreference,
+} from '../src/shared/types.ts';
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
     const response = await fetch(path, init);
@@ -9,8 +18,10 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     return (await response.json()) as T;
 }
 
-function post<T>(path: string): Promise<T> {
-    return request<T>(path, { method: 'POST' });
+function post<T>(path: string, body?: unknown): Promise<T> {
+    return body === undefined
+        ? request<T>(path, { method: 'POST' })
+        : json<T>(path, 'POST', body);
 }
 
 function json<T>(path: string, method: string, body: unknown): Promise<T> {
@@ -21,34 +32,55 @@ function json<T>(path: string, method: string, body: unknown): Promise<T> {
     });
 }
 
-const repoPath = (name: string) => `/api/repos/${encodeURIComponent(name)}`;
+const repoPath = (id: number) => `/api/repos/${id}`;
+
+/**
+ * What the tag form sends. Absent means "leave it"; `null` means "clear it",
+ * which is how a description can be taken off a tag that had one.
+ */
+export type TagFields = {
+    name?: string;
+    description?: string | null;
+    color?: string | null;
+};
+
+/** Every settings write goes through the one endpoint; this names the fields. */
+type SettingsPatch = {
+    pollPeriodSeconds?: number;
+    defaultRef?: string;
+    confirmManualRun?: boolean;
+    notifications?: NotifyMode;
+    theme?: ThemePreference;
+    columnWidths?: Partial<Record<ColumnKey, number>>;
+};
 
 export const api = {
     state: () => request<AppState>('/api/state'),
 
-    setPollPeriod: (pollPeriodSeconds: number) =>
-        json<{ settings: Settings }>('/api/settings', 'PUT', { pollPeriodSeconds }),
+    setSettings: (patch: SettingsPatch) => json<{ settings: Settings }>('/api/settings', 'PUT', patch),
 
-    setActiveTags: (activeTags: string[]) =>
-        json<{ settings: Settings }>('/api/settings', 'PUT', { activeTags }),
+    /** Which rows are on screen, so the sweep can reach them first. */
+    setFocus: (repos: number[]) => json<{ focused: number }>('/api/focus', 'PUT', { repos }),
 
-    setSweepScope: (scopeSweepToTags: boolean) =>
-        json<{ settings: Settings }>('/api/settings', 'PUT', { scopeSweepToTags }),
+    /** Does this repo exist, and what can be watched on it. */
+    resolveRepo: (repo: string) =>
+        request<{ candidate: RepoCandidate }>(`/api/resolve?repo=${encodeURIComponent(repo)}`),
 
-    createTag: (name: string) => json<{ tags: TagView[] }>('/api/tags', 'POST', { name }),
+    createTag: (tag: TagFields) => json<{ tags: TagView[] }>('/api/tags', 'POST', tag),
 
-    renameTag: (from: string, name: string) =>
-        json<{ tags: TagView[] }>(`/api/tags/${encodeURIComponent(from)}`, 'PUT', { name }),
+    /** Only what is sent is written, so a partial patch leaves the rest alone. */
+    updateTag: (from: string, changes: TagFields) =>
+        json<{ tags: TagView[] }>(`/api/tags/${encodeURIComponent(from)}`, 'PUT', changes),
 
     deleteTag: (name: string) =>
         request<{ tags: TagView[] }>(`/api/tags/${encodeURIComponent(name)}`, { method: 'DELETE' }),
 
     /** Bulk: one call sets a tag's whole membership. */
-    setTagRepos: (name: string, repos: string[]) =>
-        json<{ repos: string[]; tags: TagView[] }>(`/api/tags/${encodeURIComponent(name)}/repos`, 'PUT', { repos }),
+    setTagRepos: (name: string, repos: number[]) =>
+        json<{ repos: number[]; tags: TagView[] }>(`/api/tags/${encodeURIComponent(name)}/repos`, 'PUT', { repos }),
 
-    setRepoTags: (name: string, tags: string[]) =>
-        json<{ tags: string[]; allTags: TagView[] }>(`${repoPath(name)}/tags`, 'PUT', { tags }),
+    setRepoTags: (id: number, tags: string[]) =>
+        json<{ tags: string[]; allTags: TagView[] }>(`${repoPath(id)}/tags`, 'PUT', { tags }),
 
     addRepo: (repo: string, ref?: string) =>
         json<{ repo: RepoView }>('/api/repos', 'POST', { repo, ref }),
@@ -59,6 +91,10 @@ export const api = {
             'PUT',
             body,
         ),
+
+    /** Tries them against the instance and stores nothing either way. */
+    testCredentials: (body: { baseUrl?: string; token?: string }) =>
+        json<{ username: string; baseUrl: string }>('/api/credentials/test', 'POST', body),
 
     forgetCredentials: () => request<{ forgotten: boolean }>('/api/credentials', { method: 'DELETE' }),
 
@@ -72,27 +108,37 @@ export const api = {
             settings: Settings;
         }>('/api/import', 'POST', payload),
 
-    removeRepo: (name: string) => request<{ removed: string }>(repoPath(name), { method: 'DELETE' }),
+    removeRepo: (id: number) => request<{ removed: number }>(repoPath(id), { method: 'DELETE' }),
 
-    refreshRepo: (name: string) => post<{ repo: RepoView }>(`${repoPath(name)}/refresh`),
+    refreshRepo: (id: number) => post<{ repo: RepoView }>(`${repoPath(id)}/refresh`),
 
     sweep: () => post<{ started: boolean }>('/api/sweep'),
 
-    retryPipeline: (name: string) => post<{ repo: RepoView }>(`${repoPath(name)}/pipeline/retry`),
+    retryPipeline: (id: number) => post<{ repo: RepoView }>(`${repoPath(id)}/pipeline/retry`),
 
-    cancelPipeline: (name: string) => post<{ repo: RepoView }>(`${repoPath(name)}/pipeline/cancel`),
+    cancelPipeline: (id: number) => post<{ repo: RepoView }>(`${repoPath(id)}/pipeline/cancel`),
 
-    retryJob: (name: string, jobId: number) => post<{ repo: RepoView }>(`${repoPath(name)}/jobs/${jobId}/retry`),
+    retryJob: (id: number, jobId: number) => post<{ repo: RepoView }>(`${repoPath(id)}/jobs/${jobId}/retry`),
 
-    cancelJob: (name: string, jobId: number) => post<{ repo: RepoView }>(`${repoPath(name)}/jobs/${jobId}/cancel`),
+    cancelJob: (id: number, jobId: number) => post<{ repo: RepoView }>(`${repoPath(id)}/jobs/${jobId}/cancel`),
 
-    playJob: (name: string, jobId: number) => post<{ repo: RepoView }>(`${repoPath(name)}/jobs/${jobId}/play`),
+    playJob: (id: number, jobId: number) => post<{ repo: RepoView }>(`${repoPath(id)}/jobs/${jobId}/play`),
 
-    setWatched: (name: string, watched: boolean) =>
-        json<{ watched: boolean }>(`${repoPath(name)}/watch`, 'PUT', { watched }),
+    /** One action over every job in a stage that it applies to. */
+    actOnStage: (id: number, stage: string, action: 'retry' | 'cancel' | 'play') =>
+        post<{ repo: RepoView; stage: string; acted: number; failed: number }>(
+            `${repoPath(id)}/stage/${action}`,
+            { stage },
+        ),
 
-    async jobLog(name: string, jobId: number): Promise<string> {
-        const response = await fetch(`${repoPath(name)}/jobs/${jobId}/log`);
+    setWatched: (id: number, watched: boolean) =>
+        json<{ watched: boolean }>(`${repoPath(id)}/watch`, 'PUT', { watched }),
+
+    setNotify: (id: number, notify: NotifyMode) =>
+        json<{ notify: NotifyMode }>(`${repoPath(id)}/notify`, 'PUT', { notify }),
+
+    async jobLog(id: number, jobId: number): Promise<string> {
+        const response = await fetch(`${repoPath(id)}/jobs/${jobId}/log`);
         if (!response.ok) {
             const body = (await response.json().catch(() => null)) as { error?: string } | null;
             throw new Error(body?.error ?? `${response.status} ${response.statusText}`);

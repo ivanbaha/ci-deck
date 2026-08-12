@@ -31,14 +31,18 @@ export function openJobLog(options: {
     onRepo: (repo: RepoView) => void;
 }): void {
     let job = options.job;
-    let repoName = options.repo.name;
+    let repoId = options.repo.id;
+    let repoName = `${options.repo.name} · ${options.repo.ref}`;
     let followTimer: ReturnType<typeof setInterval> | null = null;
+    /** The trace exactly as the runner wrote it, for the clipboard. */
+    let raw = '';
 
     const terminal = h('pre', { class: 'terminal', tabindex: '0' }, 'Loading log…');
     const meta = h('span', { class: 'muted' });
     const followLabel = h('label', { class: 'field' });
     const followBox = h('input', { type: 'checkbox', id: 'follow-log' });
     const reload = button({ label: 'Reload the log', icon: 'refresh', text: 'Reload' });
+    const copy = button({ label: 'Copy the raw output to the clipboard', icon: 'copy', text: 'Copy' });
     const retry = button({ label: `Retry ${job.name}`, icon: 'retry', text: 'Retry job' });
     const cancel = button({ label: `Cancel ${job.name}`, icon: 'cancel', text: 'Cancel job' });
     const open = h('a', { class: 'btn', href: job.webUrl, target: '_blank', rel: 'noreferrer', text: 'Open in GitLab' });
@@ -80,7 +84,8 @@ export function openJobLog(options: {
     const load = async (keepScroll: boolean) => {
         const atBottom = terminal.scrollTop + terminal.clientHeight >= terminal.scrollHeight - 40;
         try {
-            const raw = await api.jobLog(repoName, job.id);
+            raw = await api.jobLog(repoId, job.id);
+            copy.disabled = raw.length === 0;
             const { text, truncated } = tailLog(raw);
             const html = ansiToHtml(text);
             terminal.innerHTML = html || '<span class="a-fg-90">No log output yet.</span>';
@@ -96,7 +101,8 @@ export function openJobLog(options: {
     };
 
     const applyRepo = (repo: RepoView) => {
-        repoName = repo.name;
+        repoId = repo.id;
+        repoName = `${repo.name} · ${repo.ref}`;
         options.onRepo(repo);
         const updated = findJob(repo, options.stage, job.name);
         if (!updated) {
@@ -114,8 +120,8 @@ export function openJobLog(options: {
         cancel.disabled = true;
         try {
             const result = action === 'retry'
-                ? await api.retryJob(repoName, job.id)
-                : await api.cancelJob(repoName, job.id);
+                ? await api.retryJob(repoId, job.id)
+                : await api.cancelJob(repoId, job.id);
             applyRepo(result.repo);
         } catch (error) {
             toastError(error);
@@ -123,7 +129,22 @@ export function openJobLog(options: {
         }
     };
 
+    /**
+     * The trace as fetched, escapes and all — a log pasted into an issue should be
+     * the log, not this viewer's reading of it. The page is served from loopback,
+     * which every browser counts as a secure context, so the clipboard is there.
+     */
+    const copyRaw = async () => {
+        try {
+            await navigator.clipboard.writeText(raw);
+            toastInfo(`Copied ${job.name}'s output`);
+        } catch (error) {
+            toastError(error instanceof Error ? error : new Error('The browser refused the clipboard'));
+        }
+    };
+
     reload.addEventListener('click', () => void load(false));
+    copy.addEventListener('click', () => void copyRaw());
     retry.addEventListener('click', () => void act('retry'));
     cancel.addEventListener('click', () => void act('cancel'));
     followBox.addEventListener('change', () => {
@@ -135,7 +156,7 @@ export function openJobLog(options: {
     });
 
     modal.body.appendChild(terminal);
-    modal.footer.append(meta, h('span', { class: 'spacer' }), followLabel, reload, cancel, retry, open);
+    modal.footer.append(meta, h('span', { class: 'spacer' }), followLabel, copy, reload, cancel, retry, open);
 
     syncControls();
     if (CANCELABLE.has(job.status)) {

@@ -1,10 +1,14 @@
 import { EnvError } from '../config/env.ts';
 import { ConfigureError, type Runtime } from '../core/runtime.ts';
-import { normalizeRepoInput, RepoResolutionError, resolveNewRepo } from '../core/resolver.ts';
+import { describeProject, normalizeRepoInput, RepoResolutionError, resolveNewRepo } from '../core/resolver.ts';
 import { repoViewFromRecord } from '../core/state.ts';
 import { describeError, GitLabRequestError, isAuthError } from '../gitlab/errors.ts';
-import type { Settings } from '../shared/types.ts';
+import { CANCELABLE_JOB_STATUSES } from '../shared/statuses.ts';
+import type { ColumnKey, JobView, RepoCandidate, Settings, StageView } from '../shared/types.ts';
+import { COLUMN_KEYS } from '../shared/types.ts';
 import {
+    isNotifyMode,
+    isThemePreference,
     parseExportFile,
     parseExportSettings,
     parseExportTags,
@@ -46,6 +50,20 @@ const SECURITY_HEADERS = {
 
 /** Well past any real watch list, and short of a file that would hold the server. */
 export const MAX_IMPORT_REPOS = 500;
+
+/** What a stage-wide control does, and to which of the stage's jobs. */
+export type StageAction = 'retry' | 'cancel' | 'play';
+
+/**
+ * A tag as the form sends it. Every field is optional on the way in: create
+ * needs only a name, and an edit writes what it was given and nothing else —
+ * which is why `null` (clear it) and absent (leave it) are different things.
+ */
+interface TagBody {
+    name?: string;
+    description?: string | null;
+    color?: string | null;
+}
 
 export class HttpError extends Error {
     readonly status: number;
@@ -89,15 +107,29 @@ function route(deps: AppDeps, handler: Handler): Handler {
     };
 }
 
+/**
+ * Which of a stage's jobs a stage-wide control acts on.
+ *
+ * `retry` takes every failed job, allowed to fail or not: a stage is amber
+ * precisely because something in it broke, and "retry the stage" that skipped
+ * those would leave the amber behind and look like it had done nothing.
+ */
+export function jobsForStageAction(stage: StageView, action: StageAction): JobView[] {
+    if (action === 'retry') return stage.jobs.filter((job) => job.status === 'failed');
+    if (action === 'cancel') return stage.jobs.filter((job) => CANCELABLE_JOB_STATUSES.has(job.status));
+    return stage.jobs.filter((job) => job.status === 'manual');
+}
+
 export function createServeOptions(deps: AppDeps) {
     const { runtime, watchStore, assets } = deps;
     const store = runtime.appStore;
 
     const params = (request: Request & { params?: Record<string, string> }) => request.params ?? {};
 
-    const requireRepo = (name: string | undefined) => {
-        const repo = name ? store.getRepo(name) : undefined;
-        if (!repo) throw new HttpError(404, `${name ?? '(unnamed)'} is not on the watch list`);
+    const requireRepo = (raw: string | undefined) => {
+        const id = Number.parseInt(raw ?? '', 10);
+        const repo = Number.isInteger(id) ? store.getRepo(id) : undefined;
+        if (!repo) throw new HttpError(404, 'That repo is not on the watch list');
         return repo;
     };
 
@@ -107,9 +139,9 @@ export function createServeOptions(deps: AppDeps) {
         return jobId;
     };
 
-    const afterAction = async (name: string) => {
-        runtime.activePoller.invalidate(name);
-        return { repo: await runtime.activePoller.refreshRepo(name) };
+    const afterAction = async (id: number) => {
+        runtime.activePoller.invalidate(id);
+        return { repo: await runtime.activePoller.refreshRepo(id) };
     };
 
     const readJson = async <T>(request: Request): Promise<T> => {
@@ -126,24 +158,10 @@ export function createServeOptions(deps: AppDeps) {
         return baseUrl;
     };
 
-    /**
-     * `repos.name` is the primary key across every instance, but the board only
-     * shows one instance at a time. A clash with a row belonging to another host
-     * is therefore invisible, and has to say so rather than claim the repo is
-     * "already on the watch list" of a board that plainly does not have it.
-     */
-    const conflictFor = (name: string, baseUrl: string): string | null => {
-        const existing = watchStore.getRepo(name);
-        if (!existing) return null;
-        return existing.baseUrl === baseUrl
-            ? `${name} is already on the watch list`
-            : `${name} is already watched on ${existing.baseUrl}, and repo names are shared between instances — remove it there first`;
-    };
-
     /** Applies the store's ordering, which sinks paused repos to the bottom. */
     const applyStoreOrder = () => {
         const baseUrl = runtime.baseUrl;
-        if (baseUrl) store.reorder(watchStore.listReposFor(baseUrl).map((record) => record.name));
+        if (baseUrl) store.reorder(watchStore.listReposFor(baseUrl).map((record) => record.id));
     };
 
     /** Ids only transfer within the instance they were resolved against. */
@@ -166,8 +184,12 @@ export function createServeOptions(deps: AppDeps) {
                 group: entry.group,
             });
 
-        const record = watchStore.addRepo({ ...resolved, baseUrl });
-        const tags = entry.tags?.length ? watchStore.setRepoTags(baseUrl, record.name, entry.tags) : [];
+        const record = watchStore.addRepo({
+            ...resolved,
+            baseUrl,
+            ...(isNotifyMode(entry.notify) ? { notify: entry.notify } : {}),
+        });
+        const tags = entry.tags?.length ? watchStore.setRepoTags(baseUrl, record.id, entry.tags) : [];
         store.addRepo(repoViewFromRecord(record, baseUrl, tags));
         return record;
     };
@@ -215,13 +237,28 @@ export function createServeOptions(deps: AppDeps) {
                 }),
             },
 
+            /**
+             * "Do these work?" — the same probe the save does, without the save.
+             * A separate route rather than a flag on the one above, so nothing
+             * that stores a token can be reached by asking to test one.
+             */
+            '/api/credentials/test': {
+                POST: route(deps, async (request) => {
+                    const body = await readJson<{ baseUrl?: string; token?: string }>(request);
+                    const result = await runtime.test({ baseUrl: body.baseUrl, token: body.token });
+                    return json(result);
+                }),
+            },
+
             '/api/settings': {
                 PUT: route(deps, async (request) => {
                     const body = await readJson<{
                         pollPeriodSeconds?: number;
                         defaultRef?: string;
-                        activeTags?: string[];
-                        scopeSweepToTags?: boolean;
+                        confirmManualRun?: boolean;
+                        notifications?: string;
+                        theme?: string;
+                        columnWidths?: Record<string, number>;
                     }>(request);
 
                     const patch: Partial<Settings> = {};
@@ -243,20 +280,40 @@ export function createServeOptions(deps: AppDeps) {
                         patch.defaultRef = watchStore.setDefaultRef(body.defaultRef);
                     }
 
-                    // The board's tag filter lives on the server because the sweep
-                    // reads it too — a view preference that changes what is polled.
-                    if (body.activeTags !== undefined) {
-                        if (!Array.isArray(body.activeTags)) {
-                            throw new HttpError(400, 'activeTags must be an array of names');
+                    if (body.confirmManualRun !== undefined) {
+                        if (typeof body.confirmManualRun !== 'boolean') {
+                            throw new HttpError(400, 'confirmManualRun must be a boolean');
                         }
-                        patch.activeTags = watchStore.setActiveTags(body.activeTags);
+                        patch.confirmManualRun = watchStore.setConfirmManualRun(body.confirmManualRun);
                     }
 
-                    if (body.scopeSweepToTags !== undefined) {
-                        if (typeof body.scopeSweepToTags !== 'boolean') {
-                            throw new HttpError(400, 'scopeSweepToTags must be a boolean');
+                    if (body.notifications !== undefined) {
+                        if (!isNotifyMode(body.notifications)) {
+                            throw new HttpError(400, 'notifications must be on, snooze or off');
                         }
-                        patch.scopeSweepToTags = watchStore.setScopeSweepToTags(body.scopeSweepToTags);
+                        patch.notifications = watchStore.setNotifications(body.notifications);
+                    }
+
+                    if (body.theme !== undefined) {
+                        if (!isThemePreference(body.theme)) {
+                            throw new HttpError(400, 'theme must be system, dark or light');
+                        }
+                        patch.theme = watchStore.setTheme(body.theme);
+                    }
+
+                    // Kept server-side like every other preference, so the board
+                    // looks the same from the second browser you open it in.
+                    if (body.columnWidths !== undefined) {
+                        const widths = body.columnWidths;
+                        if (!widths || typeof widths !== 'object') {
+                            throw new HttpError(400, 'columnWidths must be an object of column widths');
+                        }
+                        const wanted: Partial<Record<ColumnKey, number>> = {};
+                        for (const key of COLUMN_KEYS) {
+                            const value = widths[key];
+                            if (typeof value === 'number') wanted[key] = value;
+                        }
+                        patch.columnWidths = watchStore.setColumnWidths(wanted);
                     }
 
                     if (Object.keys(patch).length === 0) {
@@ -264,50 +321,104 @@ export function createServeOptions(deps: AppDeps) {
                     }
 
                     const settings = store.setSettings(patch);
-                    if (runtime.configured) runtime.activePoller.trigger();
+
+                    // Only the interval, and only because the poller works out the
+                    // next wait when the last sweep ends: shortening 15m to 30s
+                    // would otherwise sit out the rest of the old wait first. The
+                    // rest of these settings are about how the board looks and what
+                    // it says, and dragging a column is not news about a pipeline.
+                    if (patch.pollPeriodSeconds !== undefined && runtime.configured) {
+                        runtime.activePoller.trigger();
+                    }
                     return json({ settings });
+                }),
+            },
+
+            /**
+             * The rows the board is currently showing. The sweep visits these
+             * first and then everything else, so narrowing the view shortens the
+             * wait for what is on screen without quietly deciding which repos are
+             * still allowed to notify you.
+             */
+            '/api/focus': {
+                PUT: route(deps, async (request) => {
+                    const body = await readJson<{ repos?: number[] }>(request);
+                    if (!Array.isArray(body.repos)) {
+                        throw new HttpError(400, 'repos must be an array of ids');
+                    }
+                    store.setFocus(body.repos.filter((id) => Number.isInteger(id)));
+                    return json({ focused: body.repos.length });
+                }),
+            },
+
+            /**
+             * What the add dialog asks before anything is added: does this repo
+             * exist, and which branches can be watched on it.
+             */
+            '/api/resolve': {
+                GET: route(deps, async (request) => {
+                    const baseUrl = requireBaseUrl();
+                    const input = new URL(request.url).searchParams.get('repo')?.trim();
+                    if (!input) throw new HttpError(400, 'repo is required');
+
+                    const { project, branches, truncated } = await describeProject(runtime.client, input);
+                    const candidate: RepoCandidate = {
+                        name: project.name,
+                        path: project.path_with_namespace,
+                        projectId: project.id,
+                        webUrl: project.web_url,
+                        defaultBranch: project.default_branch,
+                        branches,
+                        branchesTruncated: truncated,
+                        watchedRefs: watchStore.refsFor(baseUrl, project.id),
+                    };
+                    return json({ candidate });
                 }),
             },
 
             '/api/tags': {
                 POST: route(deps, async (request) => {
                     const baseUrl = requireBaseUrl();
-                    const body = await readJson<{ name?: string }>(request);
+                    const body = await readJson<TagBody>(request);
                     const name = body.name?.trim();
                     if (!name) throw new HttpError(400, 'A tag needs a name');
                     if (watchStore.hasTag(baseUrl, name)) {
                         throw new HttpError(409, `${name} already exists`);
                     }
 
-                    watchStore.createTag(baseUrl, name);
+                    watchStore.createTag(baseUrl, name, {
+                        description: body.description,
+                        color: body.color,
+                    });
                     runtime.refreshTags();
                     return json({ tags: store.getTags() }, 201);
                 }),
             },
 
             '/api/tags/:name': {
+                /**
+                 * The edit form's save: the name, the description and the colour
+                 * travel together. A field left out of the body is left as it
+                 * was — only what the form sends is written.
+                 */
                 PUT: route(deps, async (request) => {
                     const baseUrl = requireBaseUrl();
                     const from = params(request).name!;
-                    const body = await readJson<{ name?: string }>(request);
-                    const to = body.name?.trim();
-                    if (!to) throw new HttpError(400, 'A tag needs a name');
+                    const body = await readJson<TagBody>(request);
+                    if (body.name !== undefined && !body.name.trim()) {
+                        throw new HttpError(400, 'A tag needs a name');
+                    }
 
                     try {
-                        if (!watchStore.renameTag(baseUrl, from, to)) {
-                            throw new HttpError(404, `${from} is not a tag`);
-                        }
+                        const changed = watchStore.updateTag(baseUrl, from, {
+                            ...(body.name === undefined ? {} : { name: body.name }),
+                            ...(body.description === undefined ? {} : { description: body.description }),
+                            ...(body.color === undefined ? {} : { color: body.color }),
+                        });
+                        if (!changed) throw new HttpError(404, `${from} is not a tag`);
                     } catch (error) {
                         if (error instanceof HttpError) throw error;
                         throw new HttpError(409, describeError(error));
-                    }
-
-                    // A renamed tag may be one the board is currently filtered by.
-                    const active = watchStore.settings.activeTags;
-                    if (active.includes(from)) {
-                        store.setSettings({
-                            activeTags: watchStore.setActiveTags(active.map((tag) => (tag === from ? to : tag))),
-                        });
                     }
 
                     runtime.syncTags(baseUrl);
@@ -321,13 +432,6 @@ export function createServeOptions(deps: AppDeps) {
                         throw new HttpError(404, `${name} is not a tag`);
                     }
 
-                    const active = watchStore.settings.activeTags;
-                    if (active.includes(name)) {
-                        store.setSettings({
-                            activeTags: watchStore.setActiveTags(active.filter((tag) => tag !== name)),
-                        });
-                    }
-
                     runtime.syncTags(baseUrl);
                     return json({ tags: store.getTags() });
                 }),
@@ -339,31 +443,35 @@ export function createServeOptions(deps: AppDeps) {
                 PUT: route(deps, async (request) => {
                     const baseUrl = requireBaseUrl();
                     const name = params(request).name!;
-                    const body = await readJson<{ repos?: string[] }>(request);
+                    const body = await readJson<{ repos?: number[] }>(request);
                     if (!Array.isArray(body.repos)) {
-                        throw new HttpError(400, 'repos must be an array of names');
+                        throw new HttpError(400, 'repos must be an array of ids');
                     }
                     if (!watchStore.hasTag(baseUrl, name)) {
                         throw new HttpError(404, `${name} is not a tag`);
                     }
 
-                    const applied = watchStore.setTagRepos(baseUrl, name, body.repos);
+                    const applied = watchStore.setTagRepos(
+                        baseUrl,
+                        name,
+                        body.repos.filter((id) => Number.isInteger(id)),
+                    );
                     runtime.syncTags(baseUrl);
                     return json({ tag: name, repos: applied, tags: store.getTags() });
                 }),
             },
 
-            '/api/repos/:name/tags': {
+            '/api/repos/:id/tags': {
                 PUT: route(deps, async (request) => {
                     const baseUrl = requireBaseUrl();
-                    const repo = requireRepo(params(request).name);
+                    const repo = requireRepo(params(request).id);
                     const body = await readJson<{ tags?: string[] }>(request);
                     if (!Array.isArray(body.tags)) {
                         throw new HttpError(400, 'tags must be an array of names');
                     }
 
-                    const applied = watchStore.setRepoTags(baseUrl, repo.name, body.tags);
-                    store.patchRepo(repo.name, { tags: applied });
+                    const applied = watchStore.setRepoTags(baseUrl, repo.id, body.tags);
+                    store.patchRepo(repo.id, { tags: applied });
                     runtime.refreshTags();
                     return json({ tags: applied, allTags: store.getTags() });
                 }),
@@ -398,64 +506,73 @@ export function createServeOptions(deps: AppDeps) {
                     const resolved = await resolveNewRepo(runtime.client, input, {
                         ref: body.ref?.trim() || undefined,
                     });
-                    const conflict = conflictFor(resolved.name, baseUrl);
-                    if (conflict) throw new HttpError(409, conflict);
+                    const ref = resolved.ref?.trim() || watchStore.settings.defaultRef;
+                    if (watchStore.findRepo(baseUrl, resolved.name, ref)) {
+                        throw new HttpError(409, `${resolved.name} is already watched on ${ref}`);
+                    }
 
-                    const record = watchStore.addRepo({ ...resolved, baseUrl });
+                    const record = watchStore.addRepo({ ...resolved, ref, baseUrl });
                     store.addRepo(repoViewFromRecord(record, baseUrl));
-                    const repo = await runtime.activePoller.refreshRepo(record.name);
+                    applyStoreOrder();
+                    const repo = await runtime.activePoller.refreshRepo(record.id);
                     return json({ repo }, 201);
                 }),
             },
 
-            '/api/repos/:name': {
+            '/api/repos/:id': {
                 DELETE: route(deps, (request) => {
-                    const name = params(request).name!;
-                    // Scoped to the active instance, so a name shared with another
-                    // host cannot delete a row this board never showed.
-                    const record = watchStore.getRepo(name);
-                    const baseUrl = runtime.baseUrl;
-                    if (!record || (baseUrl !== null && record.baseUrl !== baseUrl)) {
-                        throw new HttpError(404, `${name} is not on the watch list`);
-                    }
-
-                    watchStore.removeRepo(name);
-                    if (runtime.configured) runtime.activePoller.invalidate(name);
-                    store.removeRepo(name);
-                    return json({ removed: name });
+                    const repo = requireRepo(params(request).id);
+                    watchStore.removeRepo(repo.id);
+                    if (runtime.configured) runtime.activePoller.invalidate(repo.id);
+                    store.removeRepo(repo.id);
+                    return json({ removed: repo.id });
                 }),
             },
 
-            '/api/repos/:name/refresh': {
+            '/api/repos/:id/refresh': {
                 POST: route(deps, async (request) => {
-                    const repo = requireRepo(params(request).name);
-                    return json(await afterAction(repo.name));
+                    const repo = requireRepo(params(request).id);
+                    return json(await afterAction(repo.id));
                 }),
             },
 
-            '/api/repos/:name/watch': {
+            '/api/repos/:id/watch': {
                 PUT: route(deps, async (request) => {
-                    const repo = requireRepo(params(request).name);
+                    const repo = requireRepo(params(request).id);
                     const body = await readJson<{ watched?: boolean }>(request);
                     if (typeof body.watched !== 'boolean') {
                         throw new HttpError(400, 'watched must be a boolean');
                     }
 
-                    watchStore.setWatched(repo.name, body.watched);
-                    store.patchRepo(repo.name, { watched: body.watched });
+                    watchStore.setWatched(repo.id, body.watched);
+                    store.patchRepo(repo.id, { watched: body.watched });
                     applyStoreOrder();
 
                     // Resuming should show fresh data at once; pausing changes nothing else.
                     if (body.watched && runtime.configured) {
-                        return json({ watched: true, repo: await runtime.activePoller.refreshRepo(repo.name) });
+                        return json({ watched: true, repo: await runtime.activePoller.refreshRepo(repo.id) });
                     }
                     return json({ watched: body.watched });
                 }),
             },
 
-            '/api/repos/:name/jobs/:jobId/log': {
+            '/api/repos/:id/notify': {
+                PUT: route(deps, async (request) => {
+                    const repo = requireRepo(params(request).id);
+                    const body = await readJson<{ notify?: string }>(request);
+                    if (!isNotifyMode(body.notify)) {
+                        throw new HttpError(400, 'notify must be on, snooze or off');
+                    }
+
+                    watchStore.setNotify(repo.id, body.notify);
+                    store.patchRepo(repo.id, { notify: body.notify });
+                    return json({ notify: body.notify });
+                }),
+            },
+
+            '/api/repos/:id/jobs/:jobId/log': {
                 GET: route(deps, async (request) => {
-                    const repo = requireRepo(params(request).name);
+                    const repo = requireRepo(params(request).id);
                     const log = await runtime.client.getJobLog(
                         repo.projectId,
                         requireJobId(params(request).jobId),
@@ -472,45 +589,100 @@ export function createServeOptions(deps: AppDeps) {
                 }),
             },
 
-            '/api/repos/:name/jobs/:jobId/retry': {
+            '/api/repos/:id/jobs/:jobId/retry': {
                 POST: route(deps, async (request) => {
-                    const repo = requireRepo(params(request).name);
+                    const repo = requireRepo(params(request).id);
                     await runtime.client.retryJob(repo.projectId, requireJobId(params(request).jobId));
-                    return json(await afterAction(repo.name));
+                    return json(await afterAction(repo.id));
                 }),
             },
 
-            '/api/repos/:name/jobs/:jobId/cancel': {
+            '/api/repos/:id/jobs/:jobId/cancel': {
                 POST: route(deps, async (request) => {
-                    const repo = requireRepo(params(request).name);
+                    const repo = requireRepo(params(request).id);
                     await runtime.client.cancelJob(repo.projectId, requireJobId(params(request).jobId));
-                    return json(await afterAction(repo.name));
+                    return json(await afterAction(repo.id));
                 }),
             },
 
-            '/api/repos/:name/jobs/:jobId/play': {
+            '/api/repos/:id/jobs/:jobId/play': {
                 POST: route(deps, async (request) => {
-                    const repo = requireRepo(params(request).name);
+                    const repo = requireRepo(params(request).id);
                     await runtime.client.playJob(repo.projectId, requireJobId(params(request).jobId));
-                    return json(await afterAction(repo.name));
+                    return json(await afterAction(repo.id));
                 }),
             },
 
-            '/api/repos/:name/pipeline/retry': {
+            /**
+             * One control acting on a whole stage. The alternative was the browser
+             * firing a request per job and refreshing the row after each, which on
+             * a fanned-out test stage is a dozen round trips and a dozen redraws
+             * for what the user thinks of as one action.
+             *
+             * The stage travels in the body rather than the path: a stage name is
+             * free-form and routinely carries a slash.
+             */
+            '/api/repos/:id/stage/:action': {
                 POST: route(deps, async (request) => {
-                    const repo = requireRepo(params(request).name);
+                    const repo = requireRepo(params(request).id);
+                    const action = params(request).action as StageAction;
+                    if (action !== 'retry' && action !== 'cancel' && action !== 'play') {
+                        throw new HttpError(404, 'Not found');
+                    }
+
+                    const body = await readJson<{ stage?: string }>(request);
+                    const stage = repo.stages.find((entry) => entry.name === body.stage);
+                    if (!stage) throw new HttpError(404, `${repo.name} has no stage called ${body.stage}`);
+
+                    const jobs = jobsForStageAction(stage, action);
+                    if (jobs.length === 0) {
+                        const verb = { retry: 'retried', cancel: 'cancelled', play: 'started' }[action];
+                        throw new HttpError(409, `Nothing in ${stage.name} can be ${verb}`);
+                    }
+
+                    const act = (jobId: number) =>
+                        action === 'retry'
+                            ? runtime.client.retryJob(repo.projectId, jobId)
+                            : action === 'cancel'
+                                ? runtime.client.cancelJob(repo.projectId, jobId)
+                                : runtime.client.playJob(repo.projectId, jobId);
+
+                    // Every job is attempted even when one of them fails: a stage
+                    // where the first retry loses a race should still restart the
+                    // rest, and the count says how it went.
+                    const results = await Promise.allSettled(jobs.map((job) => act(job.id)));
+                    const failures = results.filter((result) => result.status === 'rejected');
+                    if (failures.length === results.length) {
+                        throw new HttpError(
+                            502,
+                            describeError((failures[0] as PromiseRejectedResult).reason),
+                        );
+                    }
+
+                    return json({
+                        ...(await afterAction(repo.id)),
+                        stage: stage.name,
+                        acted: results.length - failures.length,
+                        failed: failures.length,
+                    });
+                }),
+            },
+
+            '/api/repos/:id/pipeline/retry': {
+                POST: route(deps, async (request) => {
+                    const repo = requireRepo(params(request).id);
                     if (!repo.pipeline) throw new HttpError(409, `${repo.name} has no pipeline to retry`);
                     await runtime.client.retryPipeline(repo.projectId, repo.pipeline.id);
-                    return json(await afterAction(repo.name));
+                    return json(await afterAction(repo.id));
                 }),
             },
 
-            '/api/repos/:name/pipeline/cancel': {
+            '/api/repos/:id/pipeline/cancel': {
                 POST: route(deps, async (request) => {
-                    const repo = requireRepo(params(request).name);
+                    const repo = requireRepo(params(request).id);
                     if (!repo.pipeline) throw new HttpError(409, `${repo.name} has no pipeline to cancel`);
                     await runtime.client.cancelPipeline(repo.projectId, repo.pipeline.id);
-                    return json(await afterAction(repo.name));
+                    return json(await afterAction(repo.id));
                 }),
             },
 
@@ -544,7 +716,9 @@ export function createServeOptions(deps: AppDeps) {
 
                     // Tags first, so an empty one in the file survives even when
                     // every repo carrying it was already on the board.
-                    for (const tag of parseExportTags(payload)) watchStore.createTag(baseUrl, tag);
+                    for (const tag of parseExportTags(payload)) {
+                        watchStore.mergeTag(baseUrl, tag.name, tag);
+                    }
 
                     // An export carries the board's settings, so an import applies
                     // them — a file that says nothing about them changes nothing.
@@ -563,33 +737,40 @@ export function createServeOptions(deps: AppDeps) {
                     const added: string[] = [];
                     const tagged: string[] = [];
                     const skipped: { repo: string; reason: string }[] = [];
+                    // The same "repo · branch" the board and the import dialog use,
+                    // because a row is that pair and a name alone no longer names one.
+                    const label = (entry: ExportedRepo, ref: string) => `${entry.name} · ${ref}`;
 
                     for (const entry of entries) {
-                        const conflict = conflictFor(entry.name, baseUrl);
-                        if (conflict) {
-                            // A repo already watched is left alone, but its tags are
+                        const ref = entry.ref?.trim() || watchStore.settings.defaultRef;
+                        const existing = watchStore.findRepo(baseUrl, entry.name, ref);
+
+                        if (existing) {
+                            // A row already watched is left alone, but its tags are
                             // merged: that is what makes a file useful for sharing a
                             // tag layout with someone whose board already has the repos.
-                            const merged = entry.tags?.length
-                                && watchStore.getRepo(entry.name)?.baseUrl === baseUrl;
-                            if (merged) {
-                                const applied = watchStore.addRepoTags(baseUrl, entry.name, entry.tags!);
-                                store.patchRepo(entry.name, { tags: applied });
-                                tagged.push(entry.name);
+                            if (entry.tags?.length) {
+                                const applied = watchStore.addRepoTags(baseUrl, existing.id, entry.tags);
+                                store.patchRepo(existing.id, { tags: applied });
+                                tagged.push(label(entry, ref));
                                 continue;
                             }
-                            skipped.push({ repo: entry.name, reason: conflict });
+                            skipped.push({
+                                repo: label(entry, ref),
+                                reason: `${entry.name} is already watched on ${ref}`,
+                            });
                             continue;
                         }
                         try {
-                            const record = await addFromEntry(entry, baseUrl);
-                            added.push(record.name);
+                            const record = await addFromEntry({ ...entry, ref }, baseUrl);
+                            added.push(label(entry, record.ref));
                         } catch (error) {
-                            skipped.push({ repo: entry.name, reason: describeError(error) });
+                            skipped.push({ repo: label(entry, ref), reason: describeError(error) });
                         }
                     }
 
                     runtime.refreshTags();
+                    applyStoreOrder();
                     const settings = Object.keys(settingsPatch).length > 0
                         ? store.setSettings(settingsPatch)
                         : store.getSettings();

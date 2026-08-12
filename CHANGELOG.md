@@ -8,14 +8,72 @@ versions may still change behaviour.
 
 ## [Unreleased]
 
+## [0.2.0] — 2026-08-12
+
 ### Added
 
+- **A repo can be watched on several branches at once.** A row is now a repo *and* a
+  branch, so `main` and a release branch are two rows, filed side by side under one name.
+  The add dialog looks the repo up while you type and offers the branches it actually has,
+  so a name that is not there is said before you commit to it rather than after. A branch
+  that is deleted on GitLab strikes its row through, since nothing on it can change again.
+- **Notifications when a pipeline finishes**, with a short chime and the names of whatever
+  failed. Every row has its own setting — notify, notify silently, or say nothing, on the
+  bell beside the eye — under a global one in Configuration that acts as a ceiling over
+  them. The board only announces pipelines it watched go from running to finished, so a
+  restart does not replay yesterday. Two limits are inherent: it needs a board tab open,
+  and no browser will play a sound until you have clicked the page once.
+- **A configuration window**, behind the gear in the top bar. The GitLab connection and
+  where its credentials came from, the sweep interval and default branch, whether starting
+  a manual job asks first, the global notification setting, the theme, and the tag manager
+  — all stored in the database beside the watch list.
+- **A light theme**, following the system by default and settable either way. Every colour
+  is one token holding both values, so the two cannot drift apart. The job log stays dark
+  in both: a runner's ANSI colours are chosen against black.
+- **One control per stage**, in the stage popover, applying to every job in it at once —
+  retry if anything failed, otherwise cancel if anything is still going, otherwise start if
+  anything is waiting. It is one request rather than one per job.
+- **Stage bubbles now mark what their status had to bury.** A dashed halo for a stage that
+  also holds a manual job, and an amber dot for one where something failed and was allowed
+  to. A stage with a manual job used to call itself manual and show no sign of the failure
+  beside it.
+- **Resizable columns**, dragged from the header or nudged with the arrow keys, stored with
+  everything else so the board looks the same in the next browser you open it in. A divider
+  trades width between its two neighbours and the board never changes width doing it, so
+  nothing moves except the line under the pointer.
+- **The board's filters live in the URL** — tab, group, search and tags. A reload keeps
+  them, the back button undoes them, and a filtered board is something you can send to
+  someone.
+- **Copy the raw job output** from the log viewer, escapes and all: a log pasted into an
+  issue should be the log, not the viewer's reading of it.
+- **Tags are on for everyone.** The interface has settled, so `CI_DECK_TAGS` is gone and
+  the manager has moved into Configuration.
 - **The default branch is settable**, through `PUT /api/settings` and through an imported
   list. It decides the branch a repo added without one is watched on, it travels in an
   export, and until now nothing but editing the database could change it.
 - **An import applies the settings the file carries**, and the dialog names them before you
   press the button — a refresh interval that moves on its own is a mystery, not a feature.
   A file that says nothing about them changes nothing.
+- **A tag has a description and a colour.** Both optional, both set in one form behind the
+  **+** or the pencil in Configuration → Tags, from ten swatches, a colour well or a hex
+  code, with a live preview of the chip it will produce. A coloured tag wears it wherever
+  it appears: quiet on a row you are not looking at, and solid in the toolbar while it is
+  filtering — in white or near-black text, whichever the colour can actually carry.
+- **Ticking a repo in the tag manager saves it.** The Apply button is gone, along with the
+  pane you could close having changed nothing you thought you had changed. Writes are
+  queued one at a time, since each one sends the tag's whole membership.
+- **Tags moved into the toolbar**, beside the search and group filters rather than on a row
+  of their own. The chips size themselves: full size on one line where they fit, smaller
+  over two where they do not, remeasured whenever the bar's width changes.
+- **A tooltip of the board's own**, replacing every `title` attribute in it. It arrives
+  without the second of dead air, holds more than one line — the whole list of failed jobs
+  rather than the first and a count — and reaches a disabled control, which a mouse event
+  cannot.
+- **Test a connection without saving it.** The credentials panel gained a **Test** button
+  and the server a `POST /api/credentials/test`: the same probe the save runs, storing
+  nothing, re-pointing nothing and restarting nothing. It refuses in exactly the same
+  places the save does, so it is not a way around the rule that a stored token is only ever
+  sent to the host it was stored for.
 
 - **Standalone executables.** Every release now carries one per platform — macOS, Linux
   and Windows — each with the board's assets and the Bun runtime compiled in, so the tool
@@ -64,8 +122,52 @@ versions may still change behaviour.
 - **Every action in the release workflow is pinned to a commit.** That job mints an OIDC
   token npm and GHCR accept as this repository, and a tag can be repointed.
 
+### Changed
+
+- **Rows are addressed by an integer id rather than by name**, throughout the API: a name
+  no longer picks out one row now that a repo can be watched on several branches, and it
+  was never unique across instances either. The database is rebuilt on first start —
+  `repos` keyed by `id` with `UNIQUE(base_url, name, ref)`, and tag memberships carried
+  onto the new keys. Nothing is lost, but the routes moved from `/api/repos/:name` to
+  `/api/repos/:id`.
+- **The export format is version 4.** 3 added a per-row notification setting and treated
+  the branch as part of a row's identity; 4 gives a tag its description and colour, so the
+  top-level `tags` list holds objects rather than bare names. Older files still import — a
+  list of names reads as tags with neither field, and an entry that names no branch means
+  the board's default one, which is what it always meant. An import fills in a tag's blanks
+  and never repaints one this board has already given a colour to.
+- **Tags are assigned in two places, and a row is not one of them.** The invisible control
+  on a row that opened a per-repo tag dialog is gone, along with the dialog; a row's chips
+  now say what it carries and nothing more. Tags are applied as a repo is added, or under
+  Configuration → Tags, which is also where they are made — the Add repo dialog offers the
+  tags that exist rather than creating one from whatever was typed.
+- **The branch sits beside the repo name**, leaving the line under it to the tags. Both
+  clip, but the branch gives up room three times faster, and the whole ref is a hover away.
+- **Why a row is red moved onto its status badge.** The `lint +8 failed` text beside the
+  commit is now a hover on the badge listing every failed job by name, which the row had no
+  width for.
+- **A warning outranks a manual job** when a stage's status is worked out. Something did
+  fail there, and a stage that also held a manual job was calling itself manual and showing
+  no sign of the failure at all.
+- **Filtering the board no longer narrows the sweep.** The tag filter used to be able to
+  limit what was polled; the sweep now covers every watched row whatever is on screen, and
+  simply visits the visible ones first. A filter that decided which repos still get checked
+  also decided which ones could still tell you they broke.
+- **The row controls are less dim.** At 0.62 opacity they read as "there is nothing here"
+  rather than "this is not the point".
+
+### Removed
+
+- `CI_DECK_TAGS`, along with the settings behind the old tag-scoped sweep. Tags are on for
+  everyone, and the sweep no longer needs to know about them.
+
 ### Fixed
 
+- **The Add repo dialog opened empty.** Its tag input's `list` attribute was being set as a
+  property — `HTMLInputElement.list` is a getter, and a module runs in strict mode, so the
+  assignment threw between opening the dialog and filling it. The element factory now sets
+  an attribute wherever there is no property to set, which also fixes labels that were
+  never tied to their inputs and a log view that was never focusable.
 - Asking for a sweep after GitLab rejected the token reported that one had started. Polling
   stops for good in that state and cannot be restarted without new credentials, so the
   request is now refused and says why. `/api/state` no longer reports such a board as
@@ -147,6 +249,7 @@ Bootstrap pre-release, published under the `beta` tag. Functionally identical to
 it existed so that npm trusted publishing could be configured against a package that
 already exists. See the `0.1.0` entry for what it contains.
 
-[Unreleased]: https://github.com/ivanbaha/ci-deck/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/ivanbaha/ci-deck/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/ivanbaha/ci-deck/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/ivanbaha/ci-deck/releases/tag/v0.1.0
 [0.1.0-b1]: https://github.com/ivanbaha/ci-deck/releases/tag/v0.1.0-b1

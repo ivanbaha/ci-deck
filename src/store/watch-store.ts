@@ -2,6 +2,15 @@ import { Database } from 'bun:sqlite';
 import { chmodSync, mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import type { SecretKind, StoredSecret } from '../config/secrets.ts';
+import {
+    COLUMN_KEYS,
+    DEFAULT_COLUMN_WIDTHS,
+    MAX_COLUMN_WIDTH,
+    MIN_COLUMN_WIDTH,
+    type ColumnKey,
+    type NotifyMode,
+    type ThemePreference,
+} from '../shared/types.ts';
 import { EXPORT_VERSION, type ExportFile, normaliseTags } from '../shared/watchlist.ts';
 
 // The format itself lives in shared/ so the browser can parse a file the same
@@ -12,17 +21,9 @@ export type { ExportedRepo, ExportFile } from '../shared/watchlist.ts';
 /** The database could not be opened — which is fatal, and rarely SQLite's fault. */
 export class StoreError extends Error { }
 
-/** A stored settings value that should be a JSON array of tag names. */
-function parseStoredTags(raw: string | undefined): string[] {
-    if (!raw) return [];
-    try {
-        return normaliseTags(JSON.parse(raw));
-    } catch {
-        return [];
-    }
-}
-
 export interface RepoRecord {
+    /** Surrogate key. A repo watched on two branches is two rows sharing a name. */
+    id: number;
     name: string;
     projectId: number;
     path: string | null;
@@ -33,6 +34,9 @@ export interface RepoRecord {
     baseUrl: string;
     /** False keeps the repo on the board but out of the periodic sweep. */
     watched: boolean;
+    notify: NotifyMode;
+    /** The branch is gone from GitLab; the row stays so it can be cleared out. */
+    branchMissing: boolean;
 }
 
 export interface NewRepo {
@@ -43,6 +47,7 @@ export interface NewRepo {
     group?: string;
     baseUrl?: string;
     watched?: boolean;
+    notify?: NotifyMode;
 }
 
 export interface StoreSettings {
@@ -51,16 +56,26 @@ export interface StoreSettings {
     retries: number;
     /** Instance the board is currently pointed at, when one has been configured. */
     activeBaseUrl: string | null;
-    /** Tags currently filtering the board. Kept server-side so the sweep can use them. */
-    activeTags: string[];
-    /** When true the sweep walks only the repos carrying an active tag. */
-    scopeSweepToTags: boolean;
+    confirmManualRun: boolean;
+    /** Global switch over every row's own setting. */
+    notifications: NotifyMode;
+    theme: ThemePreference;
+    columnWidths: Record<ColumnKey, number>;
 }
 
 export interface TagRecord {
     name: string;
     /** Repos carrying it, on the active instance. */
     count: number;
+    description: string | null;
+    /** `#rrggbb`, normalised on the way in. */
+    color: string | null;
+}
+
+/** What a tag carries besides its name, all of it optional. */
+export interface TagFields {
+    description?: string | null;
+    color?: string | null;
 }
 
 export interface CredentialRecord {
@@ -76,19 +91,71 @@ export const DEFAULT_SETTINGS: StoreSettings = {
     defaultRef: 'main',
     retries: 5,
     activeBaseUrl: null,
-    activeTags: [],
-    scopeSweepToTags: false,
+    confirmManualRun: true,
+    notifications: 'on',
+    theme: 'system',
+    columnWidths: { ...DEFAULT_COLUMN_WIDTHS },
 };
 
 export const MIN_POLL_SECONDS = 10;
 export const MAX_POLL_SECONDS = 3_600;
+
+const NOTIFY_MODES = new Set<string>(['on', 'snooze', 'off']);
+const THEMES = new Set<string>(['system', 'dark', 'light']);
+
+export function isNotifyMode(value: unknown): value is NotifyMode {
+    return typeof value === 'string' && NOTIFY_MODES.has(value);
+}
+
+export function isThemePreference(value: unknown): value is ThemePreference {
+    return typeof value === 'string' && THEMES.has(value);
+}
 
 export function clampPollPeriod(value: number, fallback: number): number {
     if (!Number.isFinite(value)) return fallback;
     return Math.min(Math.max(Math.round(value), MIN_POLL_SECONDS), MAX_POLL_SECONDS);
 }
 
+export function clampColumnWidth(value: number, fallback: number): number {
+    if (!Number.isFinite(value)) return fallback;
+    return Math.min(Math.max(Math.round(value), MIN_COLUMN_WIDTH), MAX_COLUMN_WIDTH);
+}
+
+/** Long enough to say what a tag is for, short enough to sit in a tooltip. */
+const MAX_TAG_DESCRIPTION = 200;
+
+/** Six digits, lower case: one form in the database is one form to compare. */
+export function cleanColor(value: string | null | undefined): string | null {
+    if (typeof value !== 'string') return null;
+    const hex = value.trim().toLowerCase();
+    return /^#[0-9a-f]{6}$/.test(hex) ? hex : null;
+}
+
+export function cleanDescription(value: string | null | undefined): string | null {
+    if (typeof value !== 'string') return null;
+    const text = value.trim().slice(0, MAX_TAG_DESCRIPTION);
+    return text || null;
+}
+
+/** A stored settings value that should be a JSON object of column widths. */
+function parseStoredWidths(raw: string | undefined): Record<ColumnKey, number> {
+    const widths = { ...DEFAULT_COLUMN_WIDTHS };
+    if (!raw) return widths;
+
+    try {
+        const parsed = JSON.parse(raw) as Record<string, unknown>;
+        for (const key of COLUMN_KEYS) {
+            const value = parsed?.[key];
+            if (typeof value === 'number') widths[key] = clampColumnWidth(value, widths[key]);
+        }
+    } catch {
+        // A value nobody can parse is a value nobody set.
+    }
+    return widths;
+}
+
 interface RepoRow {
+    id: number;
     name: string;
     project_id: number;
     path: string | null;
@@ -97,6 +164,8 @@ interface RepoRow {
     position: number;
     base_url: string;
     watched: number;
+    notify: string;
+    branch_missing: number;
 }
 
 interface CredentialRow {
@@ -160,6 +229,67 @@ const MIGRATIONS = [
             ON DELETE CASCADE ON UPDATE CASCADE
     );
     CREATE INDEX IF NOT EXISTS repo_tags_tag ON repo_tags (base_url, tag_name);`,
+
+    // A surrogate key, because a name stopped identifying a row: the same repo can
+    // now be watched on several branches, and a name was never unique across
+    // instances either — two boards pointed at different hosts would collide on it.
+    //
+    // SQLite cannot change a primary key in place, so both tables are rebuilt and
+    // renamed into position. `repo_tags_new` is declared against `repos` — the name
+    // the new table will have, not the one it has while this runs — because a
+    // rename only rewrites other tables' REFERENCES clauses when foreign keys are
+    // enabled, and they cannot be: dropping a table another still references is
+    // exactly what this migration has to do.
+    `CREATE TABLE repos_new (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        project_id INTEGER NOT NULL,
+        path TEXT,
+        ref TEXT NOT NULL,
+        grp TEXT NOT NULL DEFAULT 'watched',
+        position INTEGER NOT NULL,
+        added_at TEXT NOT NULL,
+        base_url TEXT NOT NULL DEFAULT '',
+        web_url TEXT,
+        watched INTEGER NOT NULL DEFAULT 1,
+        notify TEXT NOT NULL DEFAULT 'on',
+        branch_missing INTEGER NOT NULL DEFAULT 0
+    );
+    INSERT INTO repos_new (name, project_id, path, ref, grp, position, added_at, base_url, web_url, watched)
+        SELECT name, project_id, path, ref, grp, position, added_at, base_url, web_url, watched FROM repos;
+
+    CREATE TABLE repo_tags_new (
+        repo_id INTEGER NOT NULL,
+        tag_name TEXT NOT NULL,
+        base_url TEXT NOT NULL,
+        PRIMARY KEY (repo_id, tag_name),
+        FOREIGN KEY (repo_id) REFERENCES repos (id) ON DELETE CASCADE,
+        FOREIGN KEY (tag_name, base_url) REFERENCES tags (name, base_url)
+            ON DELETE CASCADE ON UPDATE CASCADE
+    );
+    INSERT INTO repo_tags_new (repo_id, tag_name, base_url)
+        SELECT r.id, rt.tag_name, rt.base_url
+        FROM repo_tags rt
+        JOIN repos_new r ON r.name = rt.repo_name AND r.base_url = rt.base_url;
+
+    DROP TABLE repo_tags;
+    DROP TABLE repos;
+    ALTER TABLE repos_new RENAME TO repos;
+    ALTER TABLE repo_tags_new RENAME TO repo_tags;
+
+    CREATE UNIQUE INDEX repos_identity ON repos (base_url, name, ref);
+    CREATE INDEX repos_position ON repos (position);
+    CREATE INDEX repo_tags_tag ON repo_tags (base_url, tag_name);
+
+    -- The tag filter lives in the URL now, and the sweep covers every watched repo
+    -- regardless of it, so neither of these has a reader left.
+    DELETE FROM settings WHERE key IN ('activeTags', 'scopeSweepToTags');`,
+
+    // A tag became a thing you configure rather than a name you type: what it is
+    // for, and a colour, so a row's chips are readable as a group at a glance.
+    // Both nullable — every tag that existed before this has neither.
+    `ALTER TABLE tags ADD COLUMN description TEXT;
+    ALTER TABLE tags ADD COLUMN color TEXT;`,
 ];
 
 /**
@@ -173,10 +303,12 @@ export class WatchStore {
     private constructor(db: Database, path: string) {
         this.db = db;
         this.path = path;
-        // Here rather than in `open`, so an in-memory store cascades identically —
-        // otherwise tests would see tag memberships outlive the repos they belong to.
-        this.db.exec('PRAGMA foreign_keys = ON;');
         this.migrate();
+        // After the migration rather than before it: rebuilding a table means
+        // dropping one that another still references, which the constraint refuses.
+        // An in-memory store turns it on here too, so tests see tag memberships
+        // cascade exactly as they do on disk.
+        this.db.exec('PRAGMA foreign_keys = ON;');
     }
 
     static open(path: string): WatchStore {
@@ -217,11 +349,13 @@ export class WatchStore {
 
     private migrate(): void {
         const current = Number(this.db.query<{ user_version: number }, []>('PRAGMA user_version').get()?.user_version ?? 0);
+        if (current >= MIGRATIONS.length) return;
 
+        this.db.exec('PRAGMA foreign_keys = OFF;');
         for (let version = current; version < MIGRATIONS.length; version += 1) {
             this.db.exec(MIGRATIONS[version]!);
         }
-        if (current < MIGRATIONS.length) this.db.exec(`PRAGMA user_version = ${MIGRATIONS.length}`);
+        this.db.exec(`PRAGMA user_version = ${MIGRATIONS.length}`);
     }
 
     close(): void {
@@ -239,6 +373,14 @@ export class WatchStore {
             return Number.isInteger(parsed) ? parsed : fallback;
         };
 
+        const flag = (key: keyof StoreSettings, fallback: boolean) => {
+            const raw = stored.get(key);
+            return raw === undefined ? fallback : raw === '1';
+        };
+
+        const notifications = stored.get('notifications');
+        const theme = stored.get('theme');
+
         return {
             pollPeriodSeconds: clampPollPeriod(
                 number('pollPeriodSeconds', DEFAULT_SETTINGS.pollPeriodSeconds),
@@ -247,25 +389,15 @@ export class WatchStore {
             defaultRef: stored.get('defaultRef')?.trim() || DEFAULT_SETTINGS.defaultRef,
             retries: number('retries', DEFAULT_SETTINGS.retries),
             activeBaseUrl: stored.get('activeBaseUrl')?.trim() || null,
-            activeTags: parseStoredTags(stored.get('activeTags')),
-            scopeSweepToTags: stored.get('scopeSweepToTags') === '1',
+            confirmManualRun: flag('confirmManualRun', DEFAULT_SETTINGS.confirmManualRun),
+            notifications: isNotifyMode(notifications) ? notifications : DEFAULT_SETTINGS.notifications,
+            theme: isThemePreference(theme) ? theme : DEFAULT_SETTINGS.theme,
+            columnWidths: parseStoredWidths(stored.get('columnWidths')),
         };
     }
 
     setActiveBaseUrl(baseUrl: string): void {
         this.putSetting('activeBaseUrl', baseUrl);
-    }
-
-    /** Kept server-side, not in the browser, because the sweep reads it too. */
-    setActiveTags(tags: string[]): string[] {
-        const applied = normaliseTags(tags);
-        this.putSetting('activeTags', JSON.stringify(applied));
-        return applied;
-    }
-
-    setScopeSweepToTags(scoped: boolean): boolean {
-        this.putSetting('scopeSweepToTags', scoped ? '1' : '0');
-        return scoped;
     }
 
     private putSetting(key: string, value: string): void {
@@ -286,10 +418,37 @@ export class WatchStore {
         return applied;
     }
 
+    setConfirmManualRun(confirm: boolean): boolean {
+        this.putSetting('confirmManualRun', confirm ? '1' : '0');
+        return confirm;
+    }
+
+    setNotifications(mode: NotifyMode): NotifyMode {
+        this.putSetting('notifications', mode);
+        return mode;
+    }
+
+    setTheme(theme: ThemePreference): ThemePreference {
+        this.putSetting('theme', theme);
+        return theme;
+    }
+
+    /** Merges over what is stored, so one dragged column need not send the rest. */
+    setColumnWidths(widths: Partial<Record<ColumnKey, number>>): Record<ColumnKey, number> {
+        const merged = { ...this.settings.columnWidths };
+        for (const key of COLUMN_KEYS) {
+            const value = widths[key];
+            if (typeof value === 'number') merged[key] = clampColumnWidth(value, merged[key]);
+        }
+        this.putSetting('columnWidths', JSON.stringify(merged));
+        return merged;
+    }
+
     // --- repos ---
 
     private static toRecord(row: RepoRow): RepoRecord {
         return {
+            id: row.id,
             name: row.name,
             projectId: row.project_id,
             path: row.path,
@@ -298,11 +457,17 @@ export class WatchStore {
             position: row.position,
             baseUrl: row.base_url,
             watched: row.watched === 1,
+            notify: isNotifyMode(row.notify) ? row.notify : 'on',
+            branchMissing: row.branch_missing === 1,
         };
     }
 
-    /** Watched repos first, so paused ones collect at the bottom of the board. */
-    private static readonly ORDER = 'ORDER BY watched DESC, position ASC, name ASC';
+    /**
+     * Watched repos first, so paused ones collect at the bottom; then by name and
+     * ref, which is what keeps two branches of one repo side by side rather than
+     * wherever in the list they each happened to be added.
+     */
+    private static readonly ORDER = 'ORDER BY watched DESC, name ASC, ref ASC, position ASC';
 
     listRepos(): RepoRecord[] {
         return this.db
@@ -319,10 +484,16 @@ export class WatchStore {
             .map(WatchStore.toRecord);
     }
 
-    setWatched(name: string, watched: boolean): boolean {
-        return (
-            this.db.query('UPDATE repos SET watched = ? WHERE name = ?').run(watched ? 1 : 0, name).changes > 0
-        );
+    setWatched(id: number, watched: boolean): boolean {
+        return this.db.query('UPDATE repos SET watched = ? WHERE id = ?').run(watched ? 1 : 0, id).changes > 0;
+    }
+
+    setNotify(id: number, mode: NotifyMode): boolean {
+        return this.db.query('UPDATE repos SET notify = ? WHERE id = ?').run(mode, id).changes > 0;
+    }
+
+    setBranchMissing(id: number, missing: boolean): boolean {
+        return this.db.query('UPDATE repos SET branch_missing = ? WHERE id = ?').run(missing ? 1 : 0, id).changes > 0;
     }
 
     countFor(baseUrl: string): number {
@@ -333,13 +504,29 @@ export class WatchStore {
         );
     }
 
-    getRepo(name: string): RepoRecord | undefined {
-        const row = this.db.query<RepoRow, [string]>('SELECT * FROM repos WHERE name = ?').get(name);
+    getRepo(id: number): RepoRecord | undefined {
+        const row = this.db.query<RepoRow, [number]>('SELECT * FROM repos WHERE id = ?').get(id);
         return row ? WatchStore.toRecord(row) : undefined;
     }
 
-    has(name: string): boolean {
-        return this.getRepo(name) !== undefined;
+    /** The identity a watch list is keyed by: one instance, one repo, one branch. */
+    findRepo(baseUrl: string, name: string, ref: string): RepoRecord | undefined {
+        const row = this.db
+            .query<RepoRow, [string, string, string]>(
+                'SELECT * FROM repos WHERE base_url = ? AND name = ? AND ref = ?',
+            )
+            .get(baseUrl, name, ref);
+        return row ? WatchStore.toRecord(row) : undefined;
+    }
+
+    /** Every branch of one project already on the board. */
+    refsFor(baseUrl: string, projectId: number): string[] {
+        return this.db
+            .query<{ ref: string }, [string, number]>(
+                'SELECT ref FROM repos WHERE base_url = ? AND project_id = ? ORDER BY ref ASC',
+            )
+            .all(baseUrl, projectId)
+            .map((row) => row.ref);
     }
 
     get count(): number {
@@ -347,7 +534,12 @@ export class WatchStore {
     }
 
     addRepo(repo: NewRepo): RepoRecord {
-        if (this.has(repo.name)) throw new Error(`${repo.name} is already on the watch list`);
+        const baseUrl = repo.baseUrl?.trim() || this.settings.activeBaseUrl || '';
+        const ref = repo.ref?.trim() || this.settings.defaultRef;
+
+        if (this.findRepo(baseUrl, repo.name, ref)) {
+            throw new Error(`${repo.name} is already watched on ${ref}`);
+        }
 
         const nextPosition = (this.db
             .query<{ next: number | null }, []>('SELECT MAX(position) AS next FROM repos')
@@ -355,28 +547,29 @@ export class WatchStore {
 
         // `web_url` is left to its default: a project's URL is derived from its path
         // and the instance it belongs to, which cannot go stale the way a copy would.
-        this.db
+        const { lastInsertRowid } = this.db
             .query(
-                `INSERT INTO repos (name, project_id, path, ref, grp, position, added_at, base_url, watched)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                `INSERT INTO repos (name, project_id, path, ref, grp, position, added_at, base_url, watched, notify)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             )
             .run(
                 repo.name,
                 repo.projectId,
                 repo.path ?? null,
-                repo.ref?.trim() || this.settings.defaultRef,
+                ref,
                 repo.group?.trim() || 'watched',
                 nextPosition,
                 new Date().toISOString(),
-                repo.baseUrl?.trim() || this.settings.activeBaseUrl || '',
+                baseUrl,
                 repo.watched === false ? 0 : 1,
+                repo.notify ?? 'on',
             );
 
-        return this.getRepo(repo.name)!;
+        return this.getRepo(Number(lastInsertRowid))!;
     }
 
-    removeRepo(name: string): boolean {
-        return this.db.query('DELETE FROM repos WHERE name = ?').run(name).changes > 0;
+    removeRepo(id: number): boolean {
+        return this.db.query('DELETE FROM repos WHERE id = ?').run(id).changes > 0;
     }
 
     // --- credentials ---
@@ -423,8 +616,12 @@ export class WatchStore {
     /** Every tag on an instance with its membership count, in creation order. */
     listTags(baseUrl: string): TagRecord[] {
         return this.db
-            .query<{ name: string; count: number }, [string]>(
-                `SELECT t.name AS name, COUNT(rt.repo_name) AS count
+            .query<
+                { name: string; count: number; description: string | null; color: string | null },
+                [string]
+            >(
+                `SELECT t.name AS name, COUNT(rt.repo_id) AS count,
+                        t.description AS description, t.color AS color
                  FROM tags t
                  LEFT JOIN repo_tags rt ON rt.tag_name = t.name AND rt.base_url = t.base_url
                  WHERE t.base_url = ?
@@ -432,14 +629,19 @@ export class WatchStore {
                  ORDER BY t.position ASC, t.name ASC`,
             )
             .all(baseUrl)
-            .map((row) => ({ name: row.name, count: row.count }));
+            .map((row) => ({
+                name: row.name,
+                count: row.count,
+                description: row.description,
+                color: row.color,
+            }));
     }
 
-    /** Memberships for a whole instance in one query, keyed by repo name. */
-    tagsByRepo(baseUrl: string): Map<string, string[]> {
+    /** Memberships for a whole instance in one query, keyed by repo id. */
+    tagsByRepo(baseUrl: string): Map<number, string[]> {
         const rows = this.db
-            .query<{ repo_name: string; tag_name: string }, [string]>(
-                `SELECT rt.repo_name, rt.tag_name
+            .query<{ repo_id: number; tag_name: string }, [string]>(
+                `SELECT rt.repo_id, rt.tag_name
                  FROM repo_tags rt
                  JOIN tags t ON t.name = rt.tag_name AND t.base_url = rt.base_url
                  WHERE rt.base_url = ?
@@ -447,11 +649,11 @@ export class WatchStore {
             )
             .all(baseUrl);
 
-        const byRepo = new Map<string, string[]>();
+        const byRepo = new Map<number, string[]>();
         for (const row of rows) {
-            const list = byRepo.get(row.repo_name);
+            const list = byRepo.get(row.repo_id);
             if (list) list.push(row.tag_name);
-            else byRepo.set(row.repo_name, [row.tag_name]);
+            else byRepo.set(row.repo_id, [row.tag_name]);
         }
         return byRepo;
     }
@@ -463,7 +665,7 @@ export class WatchStore {
     }
 
     /** Creating an existing tag is a no-op, so import never has to check first. */
-    createTag(baseUrl: string, name: string): string {
+    createTag(baseUrl: string, name: string, fields: TagFields = {}): string {
         const tag = name.trim();
         if (!tag) throw new Error('A tag needs a name');
 
@@ -473,24 +675,75 @@ export class WatchStore {
 
         this.db
             .query(
-                `INSERT INTO tags (name, base_url, position, created_at) VALUES (?, ?, ?, ?)
+                `INSERT INTO tags (name, base_url, position, created_at, description, color)
+                 VALUES (?, ?, ?, ?, ?, ?)
                  ON CONFLICT(name, base_url) DO NOTHING`,
             )
-            .run(tag, baseUrl, next, new Date().toISOString());
+            .run(
+                tag,
+                baseUrl,
+                next,
+                new Date().toISOString(),
+                cleanDescription(fields.description),
+                cleanColor(fields.color),
+            );
 
         return tag;
     }
 
-    renameTag(baseUrl: string, from: string, to: string): boolean {
-        const target = to.trim();
-        if (!target || !this.hasTag(baseUrl, from)) return false;
+    /**
+     * The edit form's one call: a tag's name and what it carries change together
+     * or not at all, and an omitted field is left as it was rather than cleared.
+     */
+    updateTag(baseUrl: string, from: string, changes: TagFields & { name?: string }): boolean {
+        if (!this.hasTag(baseUrl, from)) return false;
+
+        const target = changes.name?.trim() || from;
         if (target !== from && this.hasTag(baseUrl, target)) {
             throw new Error(`${target} already exists`);
         }
 
+        const sets = ['name = ?'];
+        const values: (string | null)[] = [target];
+        if (changes.description !== undefined) {
+            sets.push('description = ?');
+            values.push(cleanDescription(changes.description));
+        }
+        if (changes.color !== undefined) {
+            sets.push('color = ?');
+            values.push(cleanColor(changes.color));
+        }
+
         // `ON UPDATE CASCADE` moves the memberships with the name.
-        this.db.query('UPDATE tags SET name = ? WHERE base_url = ? AND name = ?').run(target, baseUrl, from);
+        this.db
+            .query(`UPDATE tags SET ${sets.join(', ')} WHERE base_url = ? AND name = ?`)
+            .run(...values, baseUrl, from);
         return true;
+    }
+
+    renameTag(baseUrl: string, from: string, to: string): boolean {
+        return to.trim() ? this.updateTag(baseUrl, from, { name: to }) : false;
+    }
+
+    /**
+     * Import's direction: make the tag if it is missing, fill in what it has
+     * not got, and leave anything already set alone. A file's colour should not
+     * repaint a tag this board has already given one to — an import adds to a
+     * board, it does not take it over.
+     */
+    mergeTag(baseUrl: string, name: string, fields: TagFields = {}): string {
+        const tag = this.createTag(baseUrl, name, fields);
+
+        // COALESCE is the whole rule: the stored value where there is one, the
+        // file's where there is not.
+        this.db
+            .query(
+                `UPDATE tags SET description = COALESCE(description, ?), color = COALESCE(color, ?)
+                 WHERE base_url = ? AND name = ?`,
+            )
+            .run(cleanDescription(fields.description), cleanColor(fields.color), baseUrl, tag);
+
+        return tag;
     }
 
     deleteTag(baseUrl: string, name: string): boolean {
@@ -498,16 +751,16 @@ export class WatchStore {
     }
 
     /** Replaces a repo's tags outright; unknown tags are created on the way. */
-    setRepoTags(baseUrl: string, repoName: string, tags: string[]): string[] {
+    setRepoTags(baseUrl: string, repoId: number, tags: string[]): string[] {
         const wanted = normaliseTags(tags);
 
         this.db.transaction(() => {
             for (const tag of wanted) this.createTag(baseUrl, tag);
-            this.db.query('DELETE FROM repo_tags WHERE base_url = ? AND repo_name = ?').run(baseUrl, repoName);
+            this.db.query('DELETE FROM repo_tags WHERE base_url = ? AND repo_id = ?').run(baseUrl, repoId);
             for (const tag of wanted) {
                 this.db
-                    .query('INSERT INTO repo_tags (repo_name, tag_name, base_url) VALUES (?, ?, ?)')
-                    .run(repoName, tag, baseUrl);
+                    .query('INSERT INTO repo_tags (repo_id, tag_name, base_url) VALUES (?, ?, ?)')
+                    .run(repoId, tag, baseUrl);
             }
         })();
 
@@ -515,18 +768,18 @@ export class WatchStore {
     }
 
     /** The bulk direction: set one tag's whole membership in a single call. */
-    setTagRepos(baseUrl: string, tag: string, repoNames: string[]): string[] {
+    setTagRepos(baseUrl: string, tag: string, repoIds: number[]): number[] {
         if (!this.hasTag(baseUrl, tag)) throw new Error(`${tag} is not a tag`);
 
-        const onBoard = new Set(this.listReposFor(baseUrl).map((repo) => repo.name));
-        const wanted = [...new Set(repoNames)].filter((name) => onBoard.has(name));
+        const onBoard = new Set(this.listReposFor(baseUrl).map((repo) => repo.id));
+        const wanted = [...new Set(repoIds)].filter((id) => onBoard.has(id));
 
         this.db.transaction(() => {
             this.db.query('DELETE FROM repo_tags WHERE base_url = ? AND tag_name = ?').run(baseUrl, tag);
-            for (const name of wanted) {
+            for (const id of wanted) {
                 this.db
-                    .query('INSERT INTO repo_tags (repo_name, tag_name, base_url) VALUES (?, ?, ?)')
-                    .run(name, tag, baseUrl);
+                    .query('INSERT INTO repo_tags (repo_id, tag_name, base_url) VALUES (?, ?, ?)')
+                    .run(id, tag, baseUrl);
             }
         })();
 
@@ -534,9 +787,9 @@ export class WatchStore {
     }
 
     /** Adds without removing — how an import merges into a repo already watched. */
-    addRepoTags(baseUrl: string, repoName: string, tags: string[]): string[] {
-        const existing = this.tagsByRepo(baseUrl).get(repoName) ?? [];
-        return this.setRepoTags(baseUrl, repoName, [...existing, ...normaliseTags(tags)]);
+    addRepoTags(baseUrl: string, repoId: number, tags: string[]): string[] {
+        const existing = this.tagsByRepo(baseUrl).get(repoId) ?? [];
+        return this.setRepoTags(baseUrl, repoId, [...existing, ...normaliseTags(tags)]);
     }
 
     // --- sharing ---
@@ -557,8 +810,13 @@ export class WatchStore {
             version: EXPORT_VERSION,
             exportedAt: new Date().toISOString(),
             settings: { pollPeriodSeconds, defaultRef },
-            // Listed whole, so a tag nothing carries yet still travels.
-            tags: this.listTags(baseUrl).map((tag) => tag.name),
+            // Listed whole, so a tag nothing carries yet still travels — with
+            // what it looks like, which a repo's membership list cannot say.
+            tags: this.listTags(baseUrl).map((tag) => ({
+                name: tag.name,
+                ...(tag.description ? { description: tag.description } : {}),
+                ...(tag.color ? { color: tag.color } : {}),
+            })),
             // Scoped like everything else here: an export is meant to be shared, and
             // the rows of an instance this board is not pointed at — an internal host
             // and its project paths — are nobody else's business.
@@ -570,7 +828,8 @@ export class WatchStore {
                 group: repo.group,
                 baseUrl: repo.baseUrl,
                 watched: repo.watched,
-                tags: tagsByRepo.get(repo.name) ?? [],
+                notify: repo.notify,
+                tags: tagsByRepo.get(repo.id) ?? [],
             })),
         };
     }

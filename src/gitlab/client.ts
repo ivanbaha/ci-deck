@@ -1,5 +1,5 @@
 import { GitLabAuthError, GitLabRequestError } from './errors.ts';
-import type { GitLabJob, GitLabPipeline, GitLabProject, GitLabUser } from './types.ts';
+import type { GitLabBranch, GitLabJob, GitLabPipeline, GitLabProject, GitLabUser } from './types.ts';
 
 export interface RetryPolicy {
     /** Extra attempts after the first one. */
@@ -150,6 +150,36 @@ export class GitLabClient {
     getProject(idOrPath: number | string): Promise<GitLabProject> {
         const key = typeof idOrPath === 'number' ? String(idOrPath) : encodeURIComponent(idOrPath);
         return this.requestJson<GitLabProject>(`projects/${key}`);
+    }
+
+    /**
+     * Branch names, newest activity first, capped at one page. A project with
+     * more branches than that has more than anyone picks from a list, and the
+     * dialog says so rather than paging through hundreds of them.
+     */
+    async getBranches(projectId: number, perPage = 100): Promise<string[]> {
+        const query = new URLSearchParams({ per_page: String(perPage) });
+        const branches = await this.requestJson<GitLabBranch[]>(
+            `projects/${projectId}/repository/branches?${query}`,
+        );
+        return branches.map((branch) => branch.name);
+    }
+
+    /**
+     * Whether a branch is still there. A 404 is the answer, not a failure — every
+     * other error is left to the caller, so an instance that is merely down is
+     * never mistaken for a branch somebody deleted.
+     */
+    async branchExists(projectId: number, ref: string): Promise<boolean> {
+        try {
+            await this.requestJson<GitLabBranch>(
+                `projects/${projectId}/repository/branches/${encodeURIComponent(ref)}`,
+            );
+            return true;
+        } catch (error) {
+            if (error instanceof GitLabRequestError && error.status === 404) return false;
+            throw error;
+        }
     }
 
     async getLatestPipeline(projectId: number, ref: string): Promise<GitLabPipeline | null> {

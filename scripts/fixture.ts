@@ -76,6 +76,20 @@ const JOB_NAMES: Record<string, string[]> = {
 
 const AUTHORS = ['Ada Okafor', 'Ravi Menon', 'Lena Fischer', 'Tomás Ruiz', 'Yuki Tanaka', 'Sam Whitfield'];
 
+/** Every project has these, so the add dialog has a list worth picking from. */
+const BRANCHES = ['main', 'develop', 'release/2026.08', 'chore/bump-runners'];
+
+/**
+ * Watched on a second branch as well as main, which is what makes the board show
+ * two rows for one repo. `checkout-ui` watches a branch nothing serves, so the
+ * struck-through "branch gone" row is on screen without waiting for a merge.
+ */
+const EXTRA_REFS: Record<string, string> = {
+    'api-gateway': 'develop',
+    ledger: 'release/2026.08',
+    'checkout-ui': 'feature/dropped',
+};
+
 const TITLES = [
     'fix flaky reconnect in the consumer',
     'bump the runner image to 24.04',
@@ -87,7 +101,7 @@ const TITLES = [
     'stop logging the full request body',
 ];
 
-type Outcome = 'success' | 'failed' | 'running' | 'manual' | 'canceled' | 'warning' | 'none';
+type Outcome = 'success' | 'failed' | 'running' | 'manual' | 'canceled' | 'warning' | 'mixed' | 'none';
 
 /**
  * One entry per repo, dealt rather than sampled: drawing independently gave a
@@ -95,17 +109,20 @@ type Outcome = 'success' | 'failed' | 'running' | 'manual' | 'canceled' | 'warni
  * spread changes with the seed is a fixture you cannot describe.
  *
  * The mix is a bad morning rather than a test matrix — mostly green, a handful of
- * red, enough in flight to watch it move. `warning` is the one worth keeping:
- * only an allow_failure job failed, so the stage is amber and the row is not red,
- * which is easy to get wrong.
+ * red, enough in flight to watch it move. Two are worth keeping for what they are
+ * easy to get wrong: `warning`, where only an allow_failure job failed so the
+ * stage is amber and the row is not red; and `mixed`, one stage holding a hard
+ * failure, an advisory failure and a manual job at once, which is the case a
+ * single bubble cannot say on its own.
  */
 const OUTCOMES: Outcome[] = [
-    ...Array<Outcome>(16).fill('success'),
+    ...Array<Outcome>(14).fill('success'),
     ...Array<Outcome>(7).fill('failed'),
     ...Array<Outcome>(6).fill('running'),
     ...Array<Outcome>(3).fill('manual'),
     ...Array<Outcome>(2).fill('canceled'),
     ...Array<Outcome>(2).fill('warning'),
+    ...Array<Outcome>(2).fill('mixed'),
     ...Array<Outcome>(2).fill('none'),
 ];
 
@@ -134,6 +151,12 @@ interface Project {
      * which reads as a bug in the board.
      */
     failIndex: number;
+    /**
+     * Fixed statuses for the jobs of a `mixed` pipeline, which is the one outcome
+     * that cannot be described by position alone: it needs three specific jobs in
+     * one stage, so it says which is which rather than deriving it.
+     */
+    roles?: Map<number, string>;
     /** Seconds between job transitions, for the pipelines that are running. */
     tick: number;
     startedAt: number;
@@ -193,6 +216,22 @@ function buildWorld(): Map<number, Project> {
                 });
             }
 
+            // One stage that is red, amber and waiting for someone all at once —
+            // the three signals a single bubble has to carry between them.
+            const roles = new Map<number, string>();
+            if (outcome === 'mixed') {
+                const stage = jobs[jobs.length - 1]!.stage;
+                const add = (name: string, allowFailure: boolean, status: string) => {
+                    const id = (nextJobId += 1);
+                    jobs.push({ id, name, stage, allowFailure, duration: 45 });
+                    roles.set(id, status);
+                };
+
+                add('smoke', false, 'failed');
+                add('licenses', true, 'failed');
+                add('production', false, 'manual');
+            }
+
             world.set(id, {
                 id,
                 name,
@@ -205,6 +244,7 @@ function buildWorld(): Map<number, Project> {
                     // The last job that would actually fail the pipeline. Every
                     // repo has a build stage, so there is always one.
                     : jobs.findLastIndex((job) => !job.allowFailure),
+                ...(outcome === 'mixed' ? { roles } : {}),
                 sha: Array.from({ length: 40 }, () => '0123456789abcdef'[Math.floor(random() * 16)]).join(''),
                 title: TITLES[Math.floor(random() * TITLES.length)]!,
                 author: AUTHORS[Math.floor(random() * AUTHORS.length)]!,
@@ -230,10 +270,12 @@ function progress(project: Project): number {
     return Math.floor((((Date.now() - project.startedAt) / 1000) % cycle) / project.tick);
 }
 
-function jobStatus(project: Project, index: number, total: number): string {
+function jobStatus(project: Project, index: number, total: number, jobId: number): string {
     switch (project.override ?? project.outcome) {
         case 'none':
             return 'created';
+        case 'mixed':
+            return project.roles?.get(jobId) ?? 'success';
         case 'success':
             return 'success';
         case 'canceled':
@@ -259,6 +301,7 @@ function pipelineStatus(project: Project): string {
     const outcome = project.override ?? project.outcome;
     // An allow_failure job failing does not fail the pipeline.
     if (outcome === 'warning') return 'success';
+    if (outcome === 'mixed') return 'failed';
     if (outcome === 'none') return 'created';
     if (outcome === 'running') return progress(project) >= project.jobs.length ? 'success' : 'running';
     return outcome;
@@ -274,7 +317,7 @@ const projectJson = (project: Project) => ({
     default_branch: 'main',
 });
 
-function pipelineJson(project: Project) {
+function pipelineJson(project: Project, ref = 'main') {
     const running = (project.override ?? project.outcome) === 'running';
 
     return {
@@ -282,7 +325,7 @@ function pipelineJson(project: Project) {
         iid: project.id - 900,
         project_id: project.id,
         sha: project.sha,
-        ref: 'main',
+        ref,
         status: pipelineStatus(project),
         source: 'push',
         web_url: `${ORIGIN}${project.path}/-/pipelines/${project.pipelineId}`,
@@ -301,7 +344,7 @@ function jobsJson(project: Project) {
     };
 
     return project.jobs.map((job, index) => {
-        const status = project.jobOverrides.get(job.id) ?? jobStatus(project, index, project.jobs.length);
+        const status = project.jobOverrides.get(job.id) ?? jobStatus(project, index, project.jobs.length, job.id);
         const started = project.startedAt + index * job.duration * 1000;
         const settled = status === 'success' || status === 'failed' || status === 'canceled';
 
@@ -415,9 +458,25 @@ const gitlab = Bun.serve({
 
         if (parts.length === 1) return json(projectJson(project));
 
+        // What the add dialog offers, and what tells a deleted branch from a live
+        // one. `feature/dropped` is deliberately absent from both.
+        if (parts[1] === 'repository' && parts[2] === 'branches') {
+            if (parts.length === 3) {
+                return json(BRANCHES.map((name) => ({ name, default: name === 'main' })));
+            }
+            const wanted = decodeURIComponent(parts.slice(3).join('/'));
+            return BRANCHES.includes(wanted)
+                ? json({ name: wanted, default: wanted === 'main' })
+                : notFound();
+        }
+
         if (parts[1] === 'pipelines' && parts.length === 2) {
             const empty = (project.override ?? project.outcome) === 'none';
-            return json(empty ? [] : [pipelineJson(project)]);
+            // A branch nobody has is a branch with no pipelines, which is how a
+            // deleted one looks from here.
+            const ref = url.searchParams.get('ref');
+            if (ref && !BRANCHES.includes(ref)) return json([]);
+            return json(empty ? [] : [pipelineJson(project, ref ?? 'main')]);
         }
 
         if (parts[1] === 'pipelines' && parts[3] === 'jobs') return json(jobsJson(project));
@@ -456,12 +515,31 @@ const gitlab = Bun.serve({
 // --- the watch list --------------------------------------------------------
 
 /** Tags cut across namespaces, which is the whole point of them. */
-const TAGS: Record<string, string[]> = {
-    'release-blocking': ['api-gateway', 'auth-service', 'ledger', 'checkout-ui', 'storefront'],
-    'on-call': ['api-gateway', 'event-bus', 'payouts', 'stream-processor', 'log-shipper'],
-    frontend: ['storefront', 'admin-console', 'design-system', 'checkout-ui', 'status-page'],
-    'needs-owner': ['backup-agent', 'dns-manager', 'release-tooling'],
-    quiet: [],
+/**
+ * One tag of every kind the board can draw: coloured and described, coloured
+ * and bare, described and colourless, neither — and an empty one, so the pane
+ * has a tag with nothing in it to show.
+ */
+const TAGS: Record<string, { repos: string[]; description?: string; color?: string }> = {
+    'release-blocking': {
+        repos: ['api-gateway', 'auth-service', 'ledger', 'checkout-ui', 'storefront'],
+        description: 'A red row here stops the release',
+        color: '#d1392b',
+    },
+    'on-call': {
+        repos: ['api-gateway', 'event-bus', 'payouts', 'stream-processor', 'log-shipper'],
+        description: 'Paged out of hours',
+        color: '#c26a00',
+    },
+    frontend: {
+        repos: ['storefront', 'admin-console', 'design-system', 'checkout-ui', 'status-page'],
+        color: '#1f75cb',
+    },
+    'needs-owner': {
+        repos: ['backup-agent', 'dns-manager', 'release-tooling'],
+        description: 'Nobody has claimed these yet',
+    },
+    quiet: { repos: [] },
 };
 
 /** Two paused rows, so the bottom of the board has something to show. */
@@ -477,19 +555,35 @@ function seed(): number {
 
     if (store.countFor(ORIGIN) === 0) {
         for (const project of projects.values()) {
-            store.addRepo({
-                name: project.name,
-                projectId: project.id,
-                path: project.path,
-                group: project.group,
-                baseUrl: ORIGIN,
-                watched: !PAUSED.includes(project.name),
-            });
+            const add = (ref: string) =>
+                store.addRepo({
+                    name: project.name,
+                    projectId: project.id,
+                    path: project.path,
+                    ref,
+                    group: project.group,
+                    baseUrl: ORIGIN,
+                    watched: !PAUSED.includes(project.name),
+                });
+
+            add('main');
+            // A handful of repos are watched on a second branch too, which is the
+            // state the board files side by side under one name.
+            const extra = EXTRA_REFS[project.name];
+            if (extra) add(extra);
         }
 
-        for (const [tag, repos] of Object.entries(TAGS)) {
-            store.createTag(ORIGIN, tag);
-            if (repos.length > 0) store.setTagRepos(ORIGIN, tag, repos);
+        // Tag membership is by row now, so a tag naming a repo takes every branch
+        // of it — which is what someone ticking a name means.
+        const byName = new Map<string, number[]>();
+        for (const repo of store.listReposFor(ORIGIN)) {
+            byName.set(repo.name, [...(byName.get(repo.name) ?? []), repo.id]);
+        }
+
+        for (const [tag, { repos, description, color }] of Object.entries(TAGS)) {
+            store.createTag(ORIGIN, tag, { description, color });
+            const ids = repos.flatMap((name) => byName.get(name) ?? []);
+            if (ids.length > 0) store.setTagRepos(ORIGIN, tag, ids);
         }
 
         store.setPollPeriod(30);
@@ -503,7 +597,7 @@ function seed(): number {
 const watched = seed();
 
 console.log(`\n  Fixture GitLab   ${ORIGIN}`);
-console.log(`  Watch list       ${watched} repos across ${GROUPS.length} groups, ${Object.keys(TAGS).length} tags`);
+console.log(`  Watch list       ${watched} rows across ${GROUPS.length} groups, ${Object.keys(TAGS).length} tags`);
 console.log(`  Database         ${dbPath}${keep ? ' (kept)' : ''}`);
 
 // --- the board -------------------------------------------------------------
@@ -514,8 +608,6 @@ const board = Bun.spawn(
     [process.execPath, 'run', resolve(projectRoot, 'src/cli.ts'), '--db', dbPath, '--port', String(boardPort)],
     {
         cwd: projectRoot,
-        // The tag interface ships dark; a fixture is exactly where to look at it.
-        env: { ...process.env, CI_DECK_TAGS: '1' },
         stdout: 'inherit',
         stderr: 'inherit',
     },

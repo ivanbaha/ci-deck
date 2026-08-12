@@ -72,6 +72,14 @@ async function lookupByName(client: GitLabClient, name: string): Promise<GitLabP
     );
 }
 
+/** The one lookup both the add dialog and the add itself go through. */
+export async function findProject(client: GitLabClient, input: string): Promise<GitLabProject> {
+    const target = normalizeRepoInput(input);
+    if (!target) throw new RepoResolutionError('Repo name or path is required');
+
+    return target.includes('/') ? await client.getProject(target) : await lookupByName(client, target);
+}
+
 /**
  * Turns free-form input into a watch-list entry, resolving the project id once so
  * later sweeps never have to look it up again.
@@ -81,12 +89,30 @@ export async function resolveNewRepo(
     input: string,
     options: { ref?: string; group?: string } = {},
 ): Promise<NewRepo> {
-    const target = normalizeRepoInput(input);
-    if (!target) throw new RepoResolutionError('Repo name or path is required');
+    return toNewRepo(await findProject(client, input), options.ref, options.group);
+}
 
-    const project = target.includes('/')
-        ? await client.getProject(target)
-        : await lookupByName(client, target);
+/**
+ * What the add dialog needs to offer a branch: the project it found, and the
+ * branches on it. Typing a name is enough to learn whether the repo exists at
+ * all, which used to only come back as an error after pressing Add.
+ *
+ * A project with no branches at all is not an error here — an empty repository
+ * has none, and saying so is more use than a lookup failure.
+ */
+export async function describeProject(
+    client: GitLabClient,
+    input: string,
+    maxBranches = 100,
+): Promise<{ project: GitLabProject; branches: string[]; truncated: boolean }> {
+    const project = await findProject(client, input);
+    const branches = await client.getBranches(project.id, maxBranches);
 
-    return toNewRepo(project, options.ref, options.group);
+    // The default branch first, then the rest as GitLab ordered them: it is what
+    // all but a handful of rows will be watching.
+    const ordered = project.default_branch && branches.includes(project.default_branch)
+        ? [project.default_branch, ...branches.filter((name) => name !== project.default_branch)]
+        : branches;
+
+    return { project, branches: ordered, truncated: branches.length >= maxBranches };
 }

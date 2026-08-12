@@ -1,12 +1,12 @@
 import { describe, expect, it } from 'bun:test';
 import { AppStore, projectUrl, repoViewFromRecord } from '../src/core/state.ts';
-import type { AppMeta } from '../src/shared/types.ts';
+import { DEFAULT_COLUMN_WIDTHS, type AppMeta } from '../src/shared/types.ts';
+import type { RepoRecord } from '../src/store/watch-store.ts';
 
 const HOST = 'https://gitlab.example.com/';
 
 function meta(): AppMeta {
     return {
-        tagsEnabled: false,
         gitlabBaseUrl: HOST,
         user: 'me',
         storePath: ':memory:',
@@ -25,31 +25,46 @@ function meta(): AppMeta {
     };
 }
 
-function boardWithLiveData(tags: string[]) {
-    const store = new AppStore(
-        { pollPeriodSeconds: 120, retries: 5, defaultRef: 'main', activeTags: [], scopeSweepToTags: false },
+/** A stored row, with only the parts a test cares about spelled out. */
+function record(patch: Partial<RepoRecord> = {}): RepoRecord {
+    return {
+        id: 1,
+        name: 'alpha',
+        projectId: 1,
+        path: 'group/alpha',
+        ref: 'main',
+        group: 'group',
+        position: 1,
+        baseUrl: HOST,
+        watched: true,
+        notify: 'on',
+        branchMissing: false,
+        ...patch,
+    };
+}
+
+function newStore(): AppStore {
+    return new AppStore(
+        {
+            pollPeriodSeconds: 120,
+            retries: 5,
+            defaultRef: 'main',
+            confirmManualRun: true,
+            notifications: 'on',
+            theme: 'system',
+            columnWidths: { ...DEFAULT_COLUMN_WIDTHS },
+        },
         meta(),
     );
+}
 
-    store.setRepos([
-        repoViewFromRecord(
-            {
-                name: 'alpha',
-                projectId: 1,
-                path: 'group/alpha',
-                ref: 'main',
-                group: 'group',
-                position: 1,
-                baseUrl: HOST,
-                watched: true,
-            },
-            HOST,
-            tags,
-        ),
-    ]);
+function boardWithLiveData(tags: string[]) {
+    const store = newStore();
+
+    store.setRepos([repoViewFromRecord(record(), HOST, tags)]);
 
     // Whatever the last sweep learned from GitLab.
-    store.patchRepo('alpha', {
+    store.patchRepo(1, {
         health: 'ok',
         pipeline: {
             id: 10, iid: 3, status: 'failed', ref: 'main', sha: 'abc', source: 'push',
@@ -57,7 +72,7 @@ function boardWithLiveData(tags: string[]) {
             createdAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:01:00Z',
             commit: { shortId: 'abc1234', title: 'fix things', authorName: 'me' },
         },
-        stages: [{ name: 'test', status: 'failed', jobs: [] }],
+        stages: [{ name: 'test', status: 'failed', hasManual: false, hasWarning: false, jobs: [] }],
         lastCheckedAt: '2026-01-01T00:02:00Z',
     });
 
@@ -74,9 +89,9 @@ describe('AppStore.setRepoTags', () => {
     it('swaps tags without discarding what the sweep learned', () => {
         const store = boardWithLiveData(['backs', 'lib']);
 
-        store.setRepoTags(new Map([['alpha', ['backend', 'lib']]]));
+        store.setRepoTags(new Map([[1, ['backend', 'lib']]]));
 
-        const repo = store.getRepo('alpha')!;
+        const repo = store.getRepo(1)!;
         expect(repo.tags).toEqual(['backend', 'lib']);
         expect(repo.health).toBe('ok');
         expect(repo.pipeline?.status).toBe('failed');
@@ -89,8 +104,8 @@ describe('AppStore.setRepoTags', () => {
 
         store.setRepoTags(new Map());
 
-        expect(store.getRepo('alpha')!.tags).toEqual([]);
-        expect(store.getRepo('alpha')!.pipeline?.status).toBe('failed');
+        expect(store.getRepo(1)!.tags).toEqual([]);
+        expect(store.getRepo(1)!.pipeline?.status).toBe('failed');
     });
 
     it('tells subscribers once, with the whole list', () => {
@@ -98,9 +113,46 @@ describe('AppStore.setRepoTags', () => {
         const seen: string[] = [];
         store.subscribe((event) => seen.push(event.type));
 
-        store.setRepoTags(new Map([['alpha', ['x']]]));
+        store.setRepoTags(new Map([[1, ['x']]]));
 
         expect(seen).toEqual(['repos']);
+    });
+});
+
+/**
+ * Narrowing the board reorders the sweep and never shortens it. A filter that
+ * also decided which repos still get checked would quietly decide which ones can
+ * still tell you they broke, which is the opposite of watching them.
+ */
+describe('AppStore.sweepOrder', () => {
+    const board = () => {
+        const store = newStore();
+        store.setRepos([
+            repoViewFromRecord(record({ id: 1, name: 'alpha' }), HOST),
+            repoViewFromRecord(record({ id: 2, name: 'beta' }), HOST),
+            repoViewFromRecord(record({ id: 3, name: 'gamma' }), HOST),
+        ]);
+        return store;
+    };
+
+    it('is the board order while nothing is focused', () => {
+        expect(board().sweepOrder()).toEqual([1, 2, 3]);
+    });
+
+    it('puts the focused rows first and keeps every other one', () => {
+        const store = board();
+
+        store.setFocus([3, 1]);
+
+        expect(store.sweepOrder()).toEqual([3, 1, 2]);
+    });
+
+    it('ignores a row that has since been removed', () => {
+        const store = board();
+
+        store.setFocus([3, 99]);
+
+        expect(store.sweepOrder()).toEqual([3, 1, 2]);
     });
 });
 
@@ -141,16 +193,7 @@ describe('projectUrl', () => {
 
     it('renders a rejected path as a row with no link rather than failing', () => {
         const view = repoViewFromRecord(
-            {
-                name: 'payments-api',
-                projectId: 42,
-                path: 'https://evil.example/payments-api',
-                ref: 'main',
-                group: 'group',
-                position: 1,
-                baseUrl: HOST,
-                watched: true,
-            },
+            record({ name: 'payments-api', projectId: 42, path: 'https://evil.example/payments-api' }),
             HOST,
         );
 

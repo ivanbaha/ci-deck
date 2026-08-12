@@ -16,7 +16,7 @@ function smallBubble(status: string): HTMLElement {
 }
 
 export interface OpenStage {
-    repo: string;
+    repo: number;
     stage: string;
 }
 
@@ -25,6 +25,55 @@ export type JobAction = 'retry' | 'cancel' | 'play';
 export interface StageHandlers {
     openLog(stage: string, job: JobView): void;
     act(stage: string, job: JobView, action: JobAction): void;
+    actOnStage(stage: StageView, action: JobAction): void;
+}
+
+/**
+ * The one thing a stage-wide control should do, worst first.
+ *
+ * A stage rarely holds only one kind of job, so there is no honest way to show
+ * three buttons: retrying a stage that is still running would race the run, and
+ * cancelling one that has already failed does nothing. The order is what you
+ * would reach for — put the failures back first, stop what is still going second,
+ * start what is waiting last.
+ */
+export function stageAction(
+    stage: StageView,
+): { action: JobAction; icon: IconName; label: string; tone: ButtonTone; count: number } | null {
+    const failed = stage.jobs.filter((job) => job.status === 'failed');
+    if (failed.length > 0) {
+        return {
+            action: 'retry',
+            icon: 'retry',
+            label: `Retry ${failed.length} failed job${failed.length === 1 ? '' : 's'} in ${stage.name}`,
+            tone: 'info',
+            count: failed.length,
+        };
+    }
+
+    const running = stage.jobs.filter((job) => CANCELABLE.has(job.status));
+    if (running.length > 0) {
+        return {
+            action: 'cancel',
+            icon: 'cancel',
+            label: `Cancel ${running.length} job${running.length === 1 ? '' : 's'} in ${stage.name}`,
+            tone: 'danger',
+            count: running.length,
+        };
+    }
+
+    const manual = stage.jobs.filter((job) => job.status === 'manual');
+    if (manual.length > 0) {
+        return {
+            action: 'play',
+            icon: 'play',
+            label: `Start ${manual.length} manual job${manual.length === 1 ? '' : 's'} in ${stage.name}`,
+            tone: 'positive',
+            count: manual.length,
+        };
+    }
+
+    return null;
 }
 
 interface ActivePopover extends OpenStage {
@@ -68,7 +117,12 @@ function jobRow(stage: StageView, job: JobView): HTMLElement {
 
     const open = h(
         'button',
-        { type: 'button', class: 'job', title: `${job.name} — ${meta}\nClick to read the log` },
+        {
+            type: 'button',
+            class: 'job',
+            'data-tip-title': job.name,
+            'data-tip': `${meta}\nClick to read the log`,
+        },
         smallBubble(job.status),
         h('span', { class: 'job-name', text: job.name }),
         h('span', { class: 'job-meta', text: meta }),
@@ -98,6 +152,8 @@ function buildContent(repo: RepoView, stage: StageView): HTMLElement {
     const list = h('div', { class: 'jobs-list' });
     for (const job of stage.jobs) list.appendChild(jobRow(stage, job));
 
+    const whole = stageAction(stage);
+
     return h(
         'div',
         { class: 'popover', role: 'dialog', 'aria-label': `${stage.name} jobs of ${repo.name}` },
@@ -106,10 +162,27 @@ function buildContent(repo: RepoView, stage: StageView): HTMLElement {
             { class: 'popover-head' },
             smallBubble(stage.status),
             h('h3', { class: 'popover-title', text: `${stage.name} · ${statusLabel(stage.status)}` }),
+            h('span', { class: 'spacer' }),
+            whole
+                ? button({
+                    label: whole.label,
+                    icon: whole.icon,
+                    text: `${STAGE_VERB[whole.action]} ${whole.count}`,
+                    tone: whole.tone,
+                    small: true,
+                    onClick: () => handlers?.actOnStage(stage, whole.action),
+                })
+                : null,
         ),
         list,
     );
 }
+
+const STAGE_VERB: Record<JobAction, string> = {
+    retry: 'Retry',
+    cancel: 'Cancel',
+    play: 'Start',
+};
 
 /** Anchors below the bubble, flipping above and clamping when space runs out. */
 export function position(): void {
@@ -151,7 +224,7 @@ export function toggle(
     stage: StageView,
     stageHandlers: StageHandlers,
 ): void {
-    const wasOpen = active?.repo === repo.name && active.stage === stage.name;
+    const wasOpen = active?.repo === repo.id && active.stage === stage.name;
     close();
     if (wasOpen) return;
 
@@ -159,7 +232,7 @@ export function toggle(
     const element = buildContent(repo, stage);
     document.body.appendChild(element);
     anchor.setAttribute('aria-expanded', 'true');
-    active = { repo: repo.name, stage: stage.name, element, anchor };
+    active = { repo: repo.id, stage: stage.name, element, anchor };
     position();
 }
 
@@ -172,7 +245,7 @@ export function reattach(
     findAnchor: (stageName: string) => HTMLElement | null,
     stageHandlers: StageHandlers,
 ): void {
-    if (!active || active.repo !== repo.name) return;
+    if (!active || active.repo !== repo.id) return;
 
     const stage = repo.stages.find((entry) => entry.name === active!.stage);
     const anchor = findAnchor(active.stage);
@@ -185,7 +258,7 @@ export function reattach(
     active.element.replaceWith(element);
     anchor.setAttribute('aria-expanded', 'true');
     handlers = stageHandlers;
-    active = { repo: repo.name, stage: stage.name, element, anchor };
+    active = { repo: repo.id, stage: stage.name, element, anchor };
     position();
 }
 

@@ -1,15 +1,22 @@
 import { describe, expect, it } from 'bun:test';
-import { Poller } from '../src/core/poller.ts';
+import { Poller, resolveNotifyMode } from '../src/core/poller.ts';
 import { AppStore, repoViewFromRecord } from '../src/core/state.ts';
 import { GitLabClient } from '../src/gitlab/client.ts';
 import type { GitLabJob, GitLabPipeline } from '../src/gitlab/types.ts';
-import type { AppMeta, ServerEvent } from '../src/shared/types.ts';
+import {
+    DEFAULT_COLUMN_WIDTHS,
+    type AppMeta,
+    type NotificationEvent,
+    type NotifyMode,
+    type ServerEvent,
+    type Settings,
+} from '../src/shared/types.ts';
+import type { RepoRecord } from '../src/store/watch-store.ts';
 
 const BASE_URL = 'https://gitlab.test/';
 
 function testMeta(): AppMeta {
     return {
-        tagsEnabled: false,
         gitlabBaseUrl: BASE_URL,
         user: 'zbahiva',
         storePath: ':memory:',
@@ -35,6 +42,33 @@ function testMeta(): AppMeta {
     };
 }
 
+function testSettings(patch: Partial<Settings> = {}): Settings {
+    return {
+        pollPeriodSeconds: 120,
+        retries: 1,
+        defaultRef: 'main',
+        confirmManualRun: true,
+        notifications: 'on',
+        theme: 'system',
+        columnWidths: { ...DEFAULT_COLUMN_WIDTHS },
+        ...patch,
+    };
+}
+
+function record(patch: Partial<RepoRecord> & Pick<RepoRecord, 'id' | 'name' | 'projectId'>): RepoRecord {
+    return {
+        path: `group/${patch.name}`,
+        ref: 'main',
+        group: 'group',
+        position: patch.id,
+        baseUrl: BASE_URL,
+        watched: true,
+        notify: 'on',
+        branchMissing: false,
+        ...patch,
+    };
+}
+
 interface Scenario {
     projectId: number;
     pipeline?: Partial<GitLabPipeline> | null;
@@ -42,6 +76,10 @@ interface Scenario {
     /** HTTP status to answer with instead of data. */
     failWith?: number;
     watched?: boolean;
+    ref?: string;
+    notify?: NotifyMode;
+    /** Branches this project still has; anything else answers 404. */
+    branches?: string[];
 }
 
 function pipeline(overrides: Partial<GitLabPipeline> = {}): GitLabPipeline {
@@ -77,10 +115,12 @@ function job(overrides: Partial<GitLabJob> = {}): GitLabJob {
     };
 }
 
-function setup(scenarios: Record<string, Scenario>, retries = 1) {
+function setup(scenarios: Record<string, Scenario>, options: { retries?: number; settings?: Partial<Settings> } = {}) {
+    const retries = options.retries ?? 1;
     const names = Object.keys(scenarios);
     const calls: string[] = [];
     const interactiveCalls: string[] = [];
+    const missingBranches: { id: number; missing: boolean }[] = [];
     let inFlight = 0;
     let maxInFlight = 0;
 
@@ -95,6 +135,13 @@ function setup(scenarios: Record<string, Scenario>, retries = 1) {
 
         const projectId = Number(path.split('/')[1]);
         const scenario = Object.values(scenarios).find((entry) => entry.projectId === projectId)!;
+
+        if (path.includes('/repository/branches/')) {
+            const wanted = decodeURIComponent(path.split('/repository/branches/')[1]!);
+            return (scenario.branches ?? ['main']).includes(wanted)
+                ? new Response(JSON.stringify({ name: wanted, default: false }), { status: 200 })
+                : new Response('{"message":"404 Branch Not Found"}', { status: 404 });
+        }
 
         if (scenario.failWith) return new Response('nope', { status: scenario.failWith });
         if (path.endsWith('/jobs')) {
@@ -114,24 +161,21 @@ function setup(scenarios: Record<string, Scenario>, retries = 1) {
     const client = new GitLabClient({ ...clientOptions, fetchImpl: respond(calls) });
     const interactiveClient = new GitLabClient({ ...clientOptions, fetchImpl: respond(interactiveCalls) });
 
-    const store = new AppStore(
-        { pollPeriodSeconds: 120, retries, defaultRef: 'main', activeTags: [], scopeSweepToTags: false },
-        testMeta(),
-    );
+    const store = new AppStore(testSettings({ retries, ...options.settings }), testMeta());
+
+    const ids = new Map(names.map((name, index) => [name, index + 1]));
 
     store.setRepos(
-        names.map((name, index) =>
+        names.map((name) =>
             repoViewFromRecord(
-                {
+                record({
+                    id: ids.get(name)!,
                     name,
                     projectId: scenarios[name]!.projectId,
-                    path: `group/${name}`,
-                    ref: 'main',
-                    group: 'group',
-                    position: index + 1,
-                    baseUrl: BASE_URL,
+                    ref: scenarios[name]!.ref ?? 'main',
                     watched: scenarios[name]!.watched ?? true,
-                },
+                    notify: scenarios[name]!.notify ?? 'on',
+                }),
                 BASE_URL,
             ),
         ),
@@ -147,10 +191,27 @@ function setup(scenarios: Record<string, Scenario>, retries = 1) {
         spacingMs: 0,
         sleep: async () => undefined,
         now: () => Date.parse('2026-08-07T10:06:00Z'),
+        flags: { setBranchMissing: (id, missing) => missingBranches.push({ id, missing }) },
     });
 
-    return { poller, store, calls, interactiveCalls, events, maxInFlight: () => maxInFlight };
+    const id = (name: string) => ids.get(name)!;
+    const repo = (name: string) => store.getRepo(id(name))!;
+
+    return {
+        poller,
+        store,
+        calls,
+        interactiveCalls,
+        events,
+        missingBranches,
+        id,
+        repo,
+        maxInFlight: () => maxInFlight,
+    };
 }
+
+const notifications = (events: ServerEvent[]): NotificationEvent[] =>
+    events.filter((event) => event.type === 'notify').map((event) => event.notification);
 
 describe('Poller sweep', () => {
     it('checks repos one after another, never in parallel', async () => {
@@ -180,7 +241,7 @@ describe('Poller sweep', () => {
 
     it('links the row to GitLab from the stored path before the first check', () => {
         const harness = setup({ 'repo-a': { projectId: 1 } });
-        expect(harness.store.getRepo('repo-a')!.webUrl).toBe('https://gitlab.test/group/repo-a');
+        expect(harness.repo('repo-a').webUrl).toBe('https://gitlab.test/group/repo-a');
     });
 
     it('fills the row from the pipeline and its jobs', async () => {
@@ -202,7 +263,7 @@ describe('Poller sweep', () => {
         });
 
         await harness.poller.sweepOnce();
-        const repo = harness.store.getRepo('repo-a')!;
+        const repo = harness.repo('repo-a');
 
         expect(repo.health).toBe('ok');
         expect(repo.pipeline?.status).toBe('failed');
@@ -216,7 +277,7 @@ describe('Poller sweep', () => {
 
         await harness.poller.sweepOnce();
 
-        expect(harness.store.getRepo('repo-a')!.health).toBe('no-pipeline');
+        expect(harness.repo('repo-a').health).toBe('no-pipeline');
         expect(harness.calls).toEqual(['projects/1/pipelines']);
     });
 
@@ -244,15 +305,15 @@ describe('Poller sweep', () => {
 
         expect(harness.calls.some((path) => path.startsWith('projects/2'))).toBe(false);
         expect(harness.store.snapshot().sweep.total).toBe(2);
-        expect(harness.store.getRepo('repo-paused')!.health).toBe('unknown');
+        expect(harness.repo('repo-paused').health).toBe('unknown');
     });
 
     it('still checks a paused repo when asked directly', async () => {
         const harness = setup({ 'repo-paused': { projectId: 2, watched: false } });
 
-        await harness.poller.refreshRepo('repo-paused');
+        await harness.poller.refreshRepo(harness.id('repo-paused'));
 
-        expect(harness.store.getRepo('repo-paused')!.health).toBe('ok');
+        expect(harness.repo('repo-paused').health).toBe('ok');
         expect(harness.interactiveCalls[0]).toBe('projects/2/pipelines');
     });
 
@@ -263,6 +324,167 @@ describe('Poller sweep', () => {
 
         expect(harness.calls).toEqual([]);
         expect(harness.store.snapshot().sweep.total).toBe(0);
+    });
+
+    /**
+     * The focus is an ordering the board sets from what it is showing. It must
+     * never shorten the sweep: a repo filtered off screen is still a repo whose
+     * pipeline you asked to be told about.
+     */
+    it('visits the focused rows first and still covers the rest', async () => {
+        const harness = setup({ 'repo-a': { projectId: 1 }, 'repo-b': { projectId: 2 }, 'repo-c': { projectId: 3 } });
+
+        harness.store.setFocus([harness.id('repo-c')]);
+        await harness.poller.sweepOnce();
+
+        expect(harness.calls.filter((path) => path.endsWith('/pipelines'))).toEqual([
+            'projects/3/pipelines',
+            'projects/1/pipelines',
+            'projects/2/pipelines',
+        ]);
+        expect(harness.store.snapshot().sweep.total).toBe(3);
+    });
+});
+
+describe('Poller branch checks', () => {
+    it('leaves the default branch alone, since it is not going anywhere', async () => {
+        const harness = setup({ 'repo-a': { projectId: 1 } });
+
+        await harness.poller.sweepOnce();
+
+        expect(harness.calls.some((path) => path.includes('/repository/branches/'))).toBe(false);
+    });
+
+    it('marks a row whose branch has been deleted, and records it', async () => {
+        const harness = setup({ 'repo-a': { projectId: 1, ref: 'feature/gone', branches: ['main'] } });
+
+        await harness.poller.sweepOnce();
+
+        expect(harness.calls[0]).toBe('projects/1/repository/branches/feature%2Fgone');
+        expect(harness.repo('repo-a').branchMissing).toBe(true);
+        expect(harness.missingBranches).toEqual([{ id: 1, missing: true }]);
+    });
+
+    it('clears the mark when the branch is back', async () => {
+        const scenarios = { 'repo-a': { projectId: 1, ref: 'develop', branches: [] as string[] } };
+        const harness = setup(scenarios);
+
+        await harness.poller.sweepOnce();
+        scenarios['repo-a'].branches = ['develop'];
+        await harness.poller.refreshRepo(harness.id('repo-a'));
+
+        expect(harness.repo('repo-a').branchMissing).toBe(false);
+        expect(harness.missingBranches).toEqual([{ id: 1, missing: true }, { id: 1, missing: false }]);
+    });
+
+    /** One extra request per repo per pass, for an answer that changes once. */
+    it('does not ask again inside the throttle window', async () => {
+        const harness = setup({ 'repo-a': { projectId: 1, ref: 'develop', branches: ['develop'] } });
+
+        await harness.poller.sweepOnce();
+        await harness.poller.sweepOnce();
+
+        expect(harness.calls.filter((path) => path.includes('/repository/branches/'))).toHaveLength(1);
+    });
+});
+
+describe('Poller notifications', () => {
+    /** Only the transition. A pipeline already finished was never waited on. */
+    it('announces a pipeline that was running and has stopped', async () => {
+        const scenarios = { 'repo-a': { projectId: 1, pipeline: { status: 'running' } } as Scenario };
+        const harness = setup(scenarios);
+
+        await harness.poller.sweepOnce();
+        expect(notifications(harness.events)).toHaveLength(0);
+
+        scenarios['repo-a'].pipeline = { status: 'failed', updated_at: '2026-08-07T10:09:00Z' };
+        scenarios['repo-a'].jobs = [job({ id: 2, name: 'unit', status: 'failed' })];
+        await harness.poller.sweepOnce();
+
+        expect(notifications(harness.events)).toEqual([{
+            repoId: 1,
+            repo: 'repo-a',
+            ref: 'main',
+            status: 'failed',
+            pipelineIid: 12,
+            webUrl: 'https://gitlab.test/group/repo/-/pipelines/500',
+            silent: false,
+            failedJobs: ['unit'],
+        }]);
+    });
+
+    it('says nothing about a pipeline that was already finished when first seen', async () => {
+        const harness = setup({ 'repo-a': { projectId: 1 } });
+
+        await harness.poller.sweepOnce();
+        await harness.poller.sweepOnce();
+
+        expect(notifications(harness.events)).toHaveLength(0);
+    });
+
+    it('says nothing when a new pipeline replaces the one being watched', async () => {
+        const scenarios = { 'repo-a': { projectId: 1, pipeline: { status: 'running' } } as Scenario };
+        const harness = setup(scenarios);
+
+        await harness.poller.sweepOnce();
+        scenarios['repo-a'].pipeline = { id: 501, status: 'success' };
+        await harness.poller.sweepOnce();
+
+        expect(notifications(harness.events)).toHaveLength(0);
+    });
+
+    it('still raises it, without a sound, for a snoozed row', async () => {
+        const scenarios = {
+            'repo-a': { projectId: 1, notify: 'snooze', pipeline: { status: 'running' } } as Scenario,
+        };
+        const harness = setup(scenarios);
+
+        await harness.poller.sweepOnce();
+        scenarios['repo-a'].pipeline = { status: 'success', updated_at: '2026-08-07T10:09:00Z' };
+        await harness.poller.sweepOnce();
+
+        expect(notifications(harness.events)).toMatchObject([{ silent: true, status: 'success' }]);
+    });
+
+    it('says nothing at all for a row switched off', async () => {
+        const scenarios = {
+            'repo-a': { projectId: 1, notify: 'off', pipeline: { status: 'running' } } as Scenario,
+        };
+        const harness = setup(scenarios);
+
+        await harness.poller.sweepOnce();
+        scenarios['repo-a'].pipeline = { status: 'success', updated_at: '2026-08-07T10:09:00Z' };
+        await harness.poller.sweepOnce();
+
+        expect(notifications(harness.events)).toHaveLength(0);
+    });
+
+    it('treats a pipeline that blocked on a manual job as a result', async () => {
+        const scenarios = { 'repo-a': { projectId: 1, pipeline: { status: 'running' } } as Scenario };
+        const harness = setup(scenarios);
+
+        await harness.poller.sweepOnce();
+        scenarios['repo-a'].pipeline = { status: 'manual', updated_at: '2026-08-07T10:09:00Z' };
+        await harness.poller.sweepOnce();
+
+        expect(notifications(harness.events)).toMatchObject([{ status: 'manual' }]);
+    });
+});
+
+/** The global setting is a ceiling over each row's, not a default for it. */
+describe('resolveNotifyMode', () => {
+    it('lets a row be quieter than the board', () => {
+        expect(resolveNotifyMode('on', 'snooze')).toBe('snooze');
+        expect(resolveNotifyMode('on', 'off')).toBe('off');
+    });
+
+    it('will not let a row be louder than the board', () => {
+        expect(resolveNotifyMode('snooze', 'on')).toBe('snooze');
+        expect(resolveNotifyMode('off', 'on')).toBe('off');
+    });
+
+    it('is on only when both are', () => {
+        expect(resolveNotifyMode('on', 'on')).toBe('on');
     });
 });
 
@@ -311,7 +533,7 @@ describe('Poller jobs cache', () => {
         const harness = setup({ 'repo-a': { projectId: 1 } });
 
         await harness.poller.sweepOnce();
-        await harness.poller.refreshRepo('repo-a');
+        await harness.poller.refreshRepo(harness.id('repo-a'));
 
         expect(harness.calls.filter((path) => path.endsWith('/jobs'))).toHaveLength(1);
         expect(harness.interactiveCalls).toEqual(['projects/1/pipelines', 'projects/1/pipelines/500/jobs']);
@@ -324,10 +546,10 @@ describe('Poller failures', () => {
 
         await harness.poller.sweepOnce();
 
-        const broken = harness.store.getRepo('repo-a')!;
+        const broken = harness.repo('repo-a');
         expect(broken.health).toBe('unreachable');
         expect(broken.lastError).toContain('after 2 attempts');
-        expect(harness.store.getRepo('repo-b')!.health).toBe('ok');
+        expect(harness.repo('repo-b').health).toBe('ok');
     });
 
     it('stops the sweep and raises a banner when the token is rejected', async () => {
@@ -336,7 +558,7 @@ describe('Poller failures', () => {
         await harness.poller.sweepOnce();
 
         expect(harness.store.snapshot().meta.authError).toContain('401');
-        expect(harness.store.getRepo('repo-b')!.health).toBe('unknown');
+        expect(harness.repo('repo-b').health).toBe('unknown');
         expect(harness.events.some((event) => event.type === 'auth-error')).toBe(true);
         expect(harness.calls).toEqual(['projects/1/pipelines']);
     });
@@ -347,131 +569,31 @@ describe('AppStore reorder', () => {
         const harness = setup({ 'repo-a': { projectId: 1 }, 'repo-b': { projectId: 2 } });
         await harness.poller.sweepOnce();
 
-        const before = harness.store.getRepo('repo-a')!;
+        const before = harness.repo('repo-a');
         expect(before.pipeline).not.toBeNull();
 
-        harness.store.reorder(['repo-b', 'repo-a']);
+        harness.store.reorder([harness.id('repo-b'), harness.id('repo-a')]);
 
-        const after = harness.store.getRepo('repo-a')!;
+        const after = harness.repo('repo-a');
         expect(after.pipeline).toEqual(before.pipeline);
         expect(after.stages).toEqual(before.stages);
         expect(after.health).toBe('ok');
-        expect(harness.store.repoNames).toEqual(['repo-b', 'repo-a']);
+        expect(harness.store.repoIds).toEqual([2, 1]);
     });
 
     it('keeps repos the caller forgot to mention', async () => {
         const harness = setup({ 'repo-a': { projectId: 1 }, 'repo-b': { projectId: 2 } });
 
-        harness.store.reorder(['repo-b']);
+        harness.store.reorder([harness.id('repo-b')]);
 
-        expect(harness.store.repoNames).toEqual(['repo-b', 'repo-a']);
+        expect(harness.store.repoIds).toEqual([2, 1]);
     });
 
-    it('ignores names it does not know', async () => {
+    it('ignores ids it does not know', async () => {
         const harness = setup({ 'repo-a': { projectId: 1 } });
 
-        harness.store.reorder(['ghost', 'repo-a']);
+        harness.store.reorder([99, harness.id('repo-a')]);
 
-        expect(harness.store.repoNames).toEqual(['repo-a']);
-    });
-});
-
-describe('sweep scoping by tag', () => {
-    /** A board where each repo carries the tags its name implies. */
-    function taggedStore(tagsByRepo: Record<string, string[]>) {
-        const store = new AppStore(
-            { pollPeriodSeconds: 120, retries: 1, defaultRef: 'main', activeTags: [], scopeSweepToTags: false },
-            testMeta(),
-        );
-
-        store.setRepos(
-            Object.entries(tagsByRepo).map(([name, tags], index) =>
-                repoViewFromRecord(
-                    {
-                        name,
-                        projectId: index + 1,
-                        path: `group/${name}`,
-                        ref: 'main',
-                        group: 'group',
-                        position: index + 1,
-                        baseUrl: 'https://gitlab.example.com/',
-                        watched: true,
-                    },
-                    'https://gitlab.example.com/',
-                    tags,
-                ),
-            ),
-        );
-
-        return store;
-    }
-
-    it('narrows the board to the repos carrying an active tag', () => {
-        const store = taggedStore({ alpha: ['lib'], beta: ['lib', 'backs'], gamma: ['front'] });
-
-        expect(store.reposWithAnyTag(['lib'])).toEqual(['alpha', 'beta']);
-        expect(store.reposWithAnyTag(['front'])).toEqual(['gamma']);
-    });
-
-    it('unions rather than intersects when several tags are active', () => {
-        const store = taggedStore({ alpha: ['lib'], beta: ['backs'], gamma: ['front'] });
-
-        expect(store.reposWithAnyTag(['lib', 'front'])).toEqual(['alpha', 'gamma']);
-    });
-
-    it('treats no active tags as no restriction', () => {
-        const store = taggedStore({ alpha: ['lib'], beta: [] });
-
-        expect(store.reposWithAnyTag([])).toEqual(['alpha', 'beta']);
-    });
-
-    /**
-     * The point of the feature: watch two hundred repos, poll the handful the
-     * filter is on. Without it a serial sweep at that size never finishes in time.
-     */
-    it('polls only the scoped repos when the sweep is scoped', async () => {
-        const store = taggedStore({ alpha: ['lib'], beta: ['lib'], gamma: ['front'] });
-        store.setSettings({ activeTags: ['lib'], scopeSweepToTags: true });
-
-        const checked: string[] = [];
-        const client = new GitLabClient({
-            baseUrl: 'https://gitlab.example.com/',
-            token: 'glpat-test',
-            retry: { retries: 0 },
-            sleep: async () => undefined,
-            fetchImpl: async (url) => {
-                const match = /projects\/(\d+)\/pipelines/.exec(url);
-                if (match) checked.push(match[1]!);
-                return new Response('[]', { status: 200, headers: { 'Content-Type': 'application/json' } });
-            },
-        });
-
-        const poller = new Poller({ client, store, spacingMs: 0, sleep: async () => undefined });
-        await poller.sweepOnce();
-
-        expect(checked).toEqual(['1', '2']);
-        expect(store.snapshot().sweep.total).toBe(2);
-    });
-
-    it('polls everything when scoping is off, however the board is filtered', async () => {
-        const store = taggedStore({ alpha: ['lib'], beta: ['front'] });
-        store.setSettings({ activeTags: ['lib'], scopeSweepToTags: false });
-
-        const checked: string[] = [];
-        const client = new GitLabClient({
-            baseUrl: 'https://gitlab.example.com/',
-            token: 'glpat-test',
-            retry: { retries: 0 },
-            sleep: async () => undefined,
-            fetchImpl: async (url) => {
-                const match = /projects\/(\d+)\/pipelines/.exec(url);
-                if (match) checked.push(match[1]!);
-                return new Response('[]', { status: 200, headers: { 'Content-Type': 'application/json' } });
-            },
-        });
-
-        await new Poller({ client, store, spacingMs: 0, sleep: async () => undefined }).sweepOnce();
-
-        expect(checked).toEqual(['1', '2']);
+        expect(harness.store.repoIds).toEqual([1]);
     });
 });

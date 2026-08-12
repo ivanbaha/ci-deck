@@ -1,4 +1,4 @@
-import { normaliseBaseUrl, tagsEnabled, validateToken } from '../config/env.ts';
+import { normaliseBaseUrl, validateToken } from '../config/env.ts';
 import { resolveCredentials, type EnvLayers, type ResolvedCredentials } from '../config/resolve.ts';
 import { Secrets } from '../config/secrets.ts';
 import { GitLabClient } from '../gitlab/client.ts';
@@ -60,8 +60,10 @@ export class Runtime {
                 pollPeriodSeconds: settings.pollPeriodSeconds,
                 retries: settings.retries,
                 defaultRef: settings.defaultRef,
-                activeTags: settings.activeTags,
-                scopeSweepToTags: settings.scopeSweepToTags,
+                confirmManualRun: settings.confirmManualRun,
+                notifications: settings.notifications,
+                theme: settings.theme,
+                columnWidths: settings.columnWidths,
             },
             this.buildMeta(),
         );
@@ -128,7 +130,6 @@ export class Runtime {
 
     private buildMeta(): AppMeta {
         return {
-            tagsEnabled: tagsEnabled(),
             gitlabBaseUrl: this.resolved?.baseUrl.value ?? null,
             user: this.username,
             storePath: this.watchStore.path,
@@ -181,7 +182,7 @@ export class Runtime {
         this.appStore.setRepos(
             this.watchStore
                 .listReposFor(baseUrl)
-                .map((record) => repoViewFromRecord(record, baseUrl, tagsByRepo.get(record.name) ?? [])),
+                .map((record) => repoViewFromRecord(record, baseUrl, tagsByRepo.get(record.id) ?? [])),
         );
         this.appStore.setTags(this.watchStore.listTags(baseUrl));
     }
@@ -211,6 +212,7 @@ export class Runtime {
             client: this.clients.sweep,
             interactiveClient: this.clients.interactive,
             store: this.appStore,
+            flags: this.watchStore,
         });
 
         this.loadRepos(baseUrl);
@@ -248,10 +250,20 @@ export class Runtime {
     }
 
     /**
-     * Validates and stores credentials, then swaps in fresh clients. Missing
-     * fields fall back to whatever the environment already provides.
+     * What a form's two fields mean once the environment and the store have had
+     * their say, and whether they may be used at all.
+     *
+     * Shared by everything that sends the token somewhere — saving it and merely
+     * testing it — because the rule below is the one that must not drift between
+     * them: a stored token belongs to the host it was stored for. Verifying
+     * sends it to whatever URL arrives here, so re-pointing the board at another
+     * instance has to come with that instance's token rather than reusing this
+     * one — otherwise a single crafted request could post the PAT anywhere.
+     * Tokens from the environment are the operator's own choice.
      */
-    async configure(input: { baseUrl?: string; token?: string }): Promise<ConfigureResult> {
+    private async credentialsToTry(
+        input: { baseUrl?: string; token?: string },
+    ): Promise<{ resolved: ResolvedCredentials; baseUrl: string; token: string }> {
         const resolved = this.resolved ?? (await resolveCredentials(this.layers, this.watchStore, this.secrets));
 
         const baseUrl = input.baseUrl?.trim()
@@ -262,17 +274,34 @@ export class Runtime {
         const token = input.token?.trim() ? validateToken(input.token) : resolved.token.value;
         if (!token) throw new ConfigureError('A personal access token is required');
 
-        // A stored token belongs to the host it was stored for. Verifying sends it
-        // to whatever URL arrives here, so re-pointing the board at another
-        // instance has to come with that instance's token rather than reusing
-        // this one — otherwise a single crafted request could post the PAT
-        // anywhere. Tokens from the environment are the operator's own choice.
         const previous = resolved.baseUrl.value;
         if (previous && baseUrl !== previous && resolved.token.source === 'store' && !input.token?.trim()) {
             throw new ConfigureError(
                 `The saved token is only ever sent to ${previous}. Enter the token for ${baseUrl} to switch.`,
             );
         }
+
+        return { resolved, baseUrl, token };
+    }
+
+    /**
+     * Answers "do these work" without changing anything: nothing is stored, the
+     * board stays pointed where it is, and the sweep is not restarted. Which is
+     * the point — it is the only way to try a URL and a token against an
+     * instance without committing the board to them.
+     */
+    async test(input: { baseUrl?: string; token?: string }): Promise<{ username: string; baseUrl: string }> {
+        const { baseUrl, token } = await this.credentialsToTry(input);
+        const user = await this.verify(baseUrl, token);
+        return { username: user.username, baseUrl };
+    }
+
+    /**
+     * Validates and stores credentials, then swaps in fresh clients. Missing
+     * fields fall back to whatever the environment already provides.
+     */
+    async configure(input: { baseUrl?: string; token?: string }): Promise<ConfigureResult> {
+        const { resolved, baseUrl, token } = await this.credentialsToTry(input);
 
         const user = await this.verify(baseUrl, token);
 

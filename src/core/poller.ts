@@ -1,12 +1,19 @@
 import type { GitLabClient } from '../gitlab/client.ts';
 import { describeError, isAuthError } from '../gitlab/errors.ts';
 import type { GitLabPipeline, GitLabStatus } from '../gitlab/types.ts';
-import type { CommitView, PipelineView, RepoView, StageView } from '../shared/types.ts';
+import type { CommitView, NotifyMode, PipelineView, RepoView, StageView } from '../shared/types.ts';
 import { buildStages, extractCommit } from './stages.ts';
 import type { AppStore } from './state.ts';
 
 /** Gap between repos inside a sweep — keeps the request rate polite. */
 export const DEFAULT_SPACING_MS = 200;
+
+/**
+ * How often a row watching something other than the default branch asks whether
+ * that branch is still there. Once a sweep would be an extra request per repo per
+ * pass for an answer that changes about once in a repo's lifetime.
+ */
+export const BRANCH_CHECK_INTERVAL_MS = 5 * 60_000;
 
 interface JobsCacheEntry {
     pipelineId: number;
@@ -23,13 +30,36 @@ interface JobsCacheEntry {
  */
 const SETTLED_STATUSES = new Set<GitLabStatus>(['success', 'failed', 'canceled', 'skipped']);
 
+/**
+ * A pipeline in one of these is still going to change on its own. Everything else
+ * is a result — `manual` included, which is GitLab saying it has stopped and is
+ * waiting for a person.
+ */
+const IN_FLIGHT_STATUSES = new Set<GitLabStatus>([
+    'created',
+    'waiting_for_resource',
+    'waiting_for_callback',
+    'preparing',
+    'pending',
+    'running',
+    'scheduled',
+    'canceling',
+]);
+
+/** Where a branch that has gone missing is recorded, so a restart still shows it. */
+export interface RepoFlagSink {
+    setBranchMissing(id: number, missing: boolean): void;
+}
+
 export interface PollerOptions {
     /** Sweep lane: serialised and paced. */
     client: GitLabClient;
     /** On-demand lane, used by user-triggered checks so they never queue behind a sweep. */
     interactiveClient?: GitLabClient;
     store: AppStore;
+    flags?: RepoFlagSink;
     spacingMs?: number;
+    branchCheckIntervalMs?: number;
     sleep?: (ms: number) => Promise<void>;
     now?: () => number;
 }
@@ -54,14 +84,33 @@ function toPipelineView(pipeline: GitLabPipeline, commit: CommitView | null): Pi
     };
 }
 
+/** Hard failures only: an allow_failure job is why a stage is amber, not red. */
+function failedJobNames(stages: StageView[]): string[] {
+    return stages.flatMap((stage) =>
+        stage.jobs.filter((job) => job.status === 'failed' && !job.allowFailure).map((job) => job.name),
+    );
+}
+
+/**
+ * Whether a finished pipeline gets announced, and whether it makes a sound. The
+ * global setting is a ceiling rather than a default: turning it to `snooze`
+ * quiets every row at once without editing any of them.
+ */
+export function resolveNotifyMode(global: NotifyMode, repo: NotifyMode): NotifyMode {
+    if (global === 'off' || repo === 'off') return 'off';
+    if (global === 'snooze' || repo === 'snooze') return 'snooze';
+    return 'on';
+}
+
 /**
  * Walks the watch list one repo at a time, then waits out the poll period before
  * the next sweep. Sweeps never overlap: an overrunning sweep simply delays the
  * next one instead of stacking requests on GitLab.
  */
 export class Poller {
-    private readonly options: Required<Pick<PollerOptions, 'spacingMs' | 'sleep' | 'now'>> & PollerOptions;
-    private readonly jobsCache = new Map<string, JobsCacheEntry>();
+    private readonly options: Required<Pick<PollerOptions, 'spacingMs' | 'sleep' | 'now' | 'branchCheckIntervalMs'>> & PollerOptions;
+    private readonly jobsCache = new Map<number, JobsCacheEntry>();
+    private readonly branchCheckedAt = new Map<number, number>();
     private running = false;
     /** Set when polling must not continue: shutdown, or a token GitLab rejected. */
     private aborted = false;
@@ -71,6 +120,7 @@ export class Poller {
     constructor(options: PollerOptions) {
         this.options = {
             spacingMs: DEFAULT_SPACING_MS,
+            branchCheckIntervalMs: BRANCH_CHECK_INTERVAL_MS,
             sleep: (ms: number) => new Promise<void>((r) => setTimeout(r, ms)),
             now: () => Date.now(),
             ...options,
@@ -133,45 +183,40 @@ export class Poller {
     }
 
     /**
-     * What this sweep will walk. Paused repos are refreshed on demand only, so
-     * they cost nothing per pass — and when the sweep is scoped to the selected
-     * tags, watching two hundred repos costs only the ones you are looking at,
-     * which is the whole reason a serial sweep stays viable at that size.
+     * What this sweep will walk, and in what order. Paused repos are refreshed on
+     * demand only, so they cost nothing per pass. Everything else is covered every
+     * time — the rows the board is showing simply go first, so a search narrows
+     * what you wait for without narrowing what you are told about.
      */
-    private sweepTargets(): string[] {
+    private sweepTargets(): number[] {
         const { store } = this.options;
-        const { activeTags, scopeSweepToTags } = store.getSettings();
-
-        const candidates = scopeSweepToTags && activeTags.length > 0
-            ? store.reposWithAnyTag(activeTags)
-            : store.repoNames;
-
-        return candidates.filter((name) => store.getRepo(name)?.watched !== false);
+        return store.sweepOrder().filter((id) => store.getRepo(id)?.watched !== false);
     }
 
     async sweepOnce(): Promise<void> {
         const { store, now, sleep, spacingMs } = this.options;
-        const names = this.sweepTargets();
+        const ids = this.sweepTargets();
         const startedAt = now();
 
         store.setSweep({
             running: true,
             index: 0,
-            total: names.length,
+            total: ids.length,
             currentRepo: null,
             startedAt: new Date(startedAt).toISOString(),
             finishedAt: null,
         });
 
-        for (const [index, name] of names.entries()) {
+        for (const [index, id] of ids.entries()) {
             if (this.aborted) break;
-            if (!store.getRepo(name)) continue;
+            const repo = store.getRepo(id);
+            if (!repo) continue;
 
-            store.setSweep({ index: index + 1, currentRepo: name });
-            await this.checkRepo(name, false);
+            store.setSweep({ index: index + 1, currentRepo: repo.name });
+            await this.checkRepo(id, false);
             if (this.aborted) break;
 
-            if (index < names.length - 1 && spacingMs > 0) await sleep(spacingMs);
+            if (index < ids.length - 1 && spacingMs > 0) await sleep(spacingMs);
         }
 
         const finishedAt = now();
@@ -187,18 +232,69 @@ export class Poller {
      * Checks one repo right now, bypassing the jobs cache and the sweep lane, so a
      * user waiting on a row is never stuck behind the rest of the watch list.
      */
-    async refreshRepo(name: string): Promise<RepoView | undefined> {
-        await this.checkRepo(name, true);
-        return this.options.store.getRepo(name);
+    async refreshRepo(id: number): Promise<RepoView | undefined> {
+        await this.checkRepo(id, true);
+        return this.options.store.getRepo(id);
     }
 
-    invalidate(name: string): void {
-        this.jobsCache.delete(name);
+    invalidate(id: number): void {
+        this.jobsCache.delete(id);
+        this.branchCheckedAt.delete(id);
     }
 
-    private async checkRepo(name: string, interactive: boolean): Promise<void> {
+    /**
+     * Asks whether the branch is still on GitLab, for rows watching something
+     * other than the board's default. A branch that was merged and deleted leaves
+     * a row that can never go green again, and the honest thing is to say so
+     * rather than to let it sit there looking merely quiet.
+     */
+    private async checkBranch(repo: RepoView, client: GitLabClient, force: boolean): Promise<void> {
+        const { store, flags, now, branchCheckIntervalMs } = this.options;
+        if (repo.ref === store.getSettings().defaultRef) return;
+
+        const last = this.branchCheckedAt.get(repo.id);
+        if (!force && last !== undefined && now() - last < branchCheckIntervalMs) return;
+
+        // Any other failure is the instance being unreachable, which the pipeline
+        // fetch right after this reports properly. Nothing is claimed from it.
+        const exists = await client.branchExists(repo.projectId, repo.ref).catch(() => true);
+        this.branchCheckedAt.set(repo.id, now());
+
+        if (exists === repo.branchMissing) {
+            store.patchRepo(repo.id, { branchMissing: !exists });
+            flags?.setBranchMissing(repo.id, !exists);
+        }
+    }
+
+    /**
+     * Announces a pipeline that was in flight and has stopped being in flight.
+     * Only that transition: a pipeline already finished when the board first saw
+     * it was never being waited on, and saying so on every restart would make the
+     * whole thing noise.
+     */
+    private announce(before: RepoView, after: PipelineView, stages: StageView[]): void {
+        const previous = before.pipeline;
+        if (!previous || previous.id !== after.id) return;
+        if (!IN_FLIGHT_STATUSES.has(previous.status) || IN_FLIGHT_STATUSES.has(after.status)) return;
+
+        const mode = resolveNotifyMode(this.options.store.getSettings().notifications, before.notify);
+        if (mode === 'off') return;
+
+        this.options.store.notify({
+            repoId: before.id,
+            repo: before.name,
+            ref: before.ref,
+            status: after.status,
+            pipelineIid: after.iid,
+            webUrl: after.webUrl,
+            silent: mode === 'snooze',
+            failedJobs: failedJobNames(stages),
+        });
+    }
+
+    private async checkRepo(id: number, interactive: boolean): Promise<void> {
         const { store } = this.options;
-        const repo = store.getRepo(name);
+        const repo = store.getRepo(id);
         if (!repo) return;
 
         const force = interactive;
@@ -206,15 +302,17 @@ export class Poller {
             ? this.options.interactiveClient ?? this.options.client
             : this.options.client;
 
-        store.patchRepo(name, { checking: true });
+        store.patchRepo(id, { checking: true });
 
         try {
+            await this.checkBranch(repo, client, force);
+
             const pipeline = await client.getLatestPipeline(repo.projectId, repo.ref);
             const checkedAt = new Date(this.options.now()).toISOString();
 
             if (!pipeline) {
-                this.jobsCache.delete(name);
-                store.patchRepo(name, {
+                this.jobsCache.delete(id);
+                store.patchRepo(id, {
                     health: 'no-pipeline',
                     pipeline: null,
                     stages: [],
@@ -225,7 +323,7 @@ export class Poller {
                 return;
             }
 
-            const cached = this.jobsCache.get(name);
+            const cached = this.jobsCache.get(id);
             const reusable = !force
                 && SETTLED_STATUSES.has(pipeline.status)
                 && cached?.pipelineId === pipeline.id
@@ -242,7 +340,7 @@ export class Poller {
                 const jobs = await client.getPipelineJobs(repo.projectId, pipeline.id);
                 stages = buildStages(jobs);
                 commit = extractCommit(jobs);
-                this.jobsCache.set(name, {
+                this.jobsCache.set(id, {
                     pipelineId: pipeline.id,
                     updatedAt: pipeline.updated_at,
                     status: pipeline.status,
@@ -251,10 +349,15 @@ export class Poller {
                 });
             }
 
-            store.patchRepo(name, {
+            const view = toPipelineView(pipeline, commit);
+            // Before the patch, because the comparison is against what the board
+            // last knew and the patch is what replaces it.
+            this.announce(repo, view, stages);
+
+            store.patchRepo(id, {
                 webUrl: repo.webUrl ?? projectUrlFromPipeline(pipeline.web_url),
                 health: 'ok',
-                pipeline: toPipelineView(pipeline, commit),
+                pipeline: view,
                 stages,
                 lastCheckedAt: checkedAt,
                 lastError: null,
@@ -262,7 +365,7 @@ export class Poller {
             });
         } catch (error) {
             const message = describeError(error);
-            store.patchRepo(name, {
+            store.patchRepo(id, {
                 health: 'unreachable',
                 lastCheckedAt: new Date(this.options.now()).toISOString(),
                 lastError: message,

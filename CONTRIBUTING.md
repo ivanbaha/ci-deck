@@ -61,21 +61,26 @@ bun run fixture                 # board on :8790, stand-in GitLab on :8899
 bun run fixture --port 9000     # --gitlab-port moves the other one; --keep reuses the list
 ```
 
-It serves the eight API endpoints the board actually calls, seeds a watch list of 38 repos
-across six namespaces into `.fixture/` — gitignored, rebuilt each run — and starts the board
-on it through `src/cli.ts`, so what you are looking at is the real entrypoint rather than a
-copy of its startup. `CI_DECK_TAGS` is on, since a fixture is exactly where to look at the
-tag interface. Ctrl-C stops both.
+It serves the API endpoints the board actually calls, seeds a watch list of 41 rows across
+six namespaces into `.fixture/` — gitignored, rebuilt each run — and starts the board on it
+through `src/cli.ts`, so what you are looking at is the real entrypoint rather than a copy
+of its startup. Ctrl-C stops both.
 
 The world comes from a fixed seed, so it is the same every run and a screenshot means
 something. Outcomes are dealt from a shuffled deck rather than drawn per repo: the spread is
 then exactly the one described in the file, instead of whatever the seed happened to give.
 Every state the board can draw is on it at once — failed, passed, running, manual, canceled,
-no pipeline, paused rows, and a stage that is amber because only an `allow_failure` job
-failed. Pipelines that are running advance on a cycle, so the board keeps moving; retry,
-cancel and play all change what the next sweep sees. Job traces carry ANSI colour, section
-markers and a progress bar redrawn with carriage returns, which is what the log viewer
-exists to handle.
+no pipeline, paused rows, a stage that is amber because only an `allow_failure` job failed,
+and a stage that is red, amber and waiting on a person at the same time, which is the one a
+single bubble cannot say on its own. Three repos are watched on a second branch as well as
+`main`, one of them on a branch the fixture GitLab does not have, so the struck-through
+"branch gone" row is on screen without waiting for a merge.
+
+Pipelines that are running advance on a cycle, so the board keeps moving; that is also what
+makes notifications fire, since they are raised on the transition out of a running state.
+Retry, cancel and play all change what the next sweep sees. Job traces carry ANSI colour,
+section markers and a progress bar redrawn with carriage returns, which is what the log
+viewer exists to handle.
 
 Nothing in `scripts/fixture.ts` ships: `src/` does not import it, and it is not in the
 published `files`.
@@ -126,9 +131,16 @@ ten seconds later.
   stored — and never appears in an export.
 - **Sweeps are serial on purpose.** One repo at a time, spaced apart, never overlapping.
   Concurrency here spends someone's GitLab rate limit.
-- **Tags are switched off by default.** The store, API and export format carry them; the
-  interface is behind `CI_DECK_TAGS=1` while it is still being worked out. Expect it to
-  change, and prefer changing it over building on top of it for now.
+- **A row is a repo and a branch, addressed by an integer id.** `repos.name` was the
+  primary key until the schema was rebuilt around `id` with `UNIQUE(base_url, name, ref)`.
+  Nothing in the API takes a repo name any more, and anything that reintroduces one has to
+  answer which of two branches it means.
+- **Filtering must never narrow the sweep.** The board posts the visible ids to
+  `/api/focus` and the sweep puts those first — an ordering, not a filter. A filter here
+  would quietly decide which repos are still allowed to notify you, which is the opposite
+  of watching them.
+- **Notifications are detected server-side** and arrive as an SSE event, so a reload does
+  not lose track of what was running. The browser only decides how to raise them.
 
 ## Icons
 
