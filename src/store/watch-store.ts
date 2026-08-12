@@ -67,6 +67,15 @@ export interface TagRecord {
     name: string;
     /** Repos carrying it, on the active instance. */
     count: number;
+    description: string | null;
+    /** `#rrggbb`, normalised on the way in. */
+    color: string | null;
+}
+
+/** What a tag carries besides its name, all of it optional. */
+export interface TagFields {
+    description?: string | null;
+    color?: string | null;
 }
 
 export interface CredentialRecord {
@@ -110,6 +119,22 @@ export function clampPollPeriod(value: number, fallback: number): number {
 export function clampColumnWidth(value: number, fallback: number): number {
     if (!Number.isFinite(value)) return fallback;
     return Math.min(Math.max(Math.round(value), MIN_COLUMN_WIDTH), MAX_COLUMN_WIDTH);
+}
+
+/** Long enough to say what a tag is for, short enough to sit in a tooltip. */
+const MAX_TAG_DESCRIPTION = 200;
+
+/** Six digits, lower case: one form in the database is one form to compare. */
+export function cleanColor(value: string | null | undefined): string | null {
+    if (typeof value !== 'string') return null;
+    const hex = value.trim().toLowerCase();
+    return /^#[0-9a-f]{6}$/.test(hex) ? hex : null;
+}
+
+export function cleanDescription(value: string | null | undefined): string | null {
+    if (typeof value !== 'string') return null;
+    const text = value.trim().slice(0, MAX_TAG_DESCRIPTION);
+    return text || null;
 }
 
 /** A stored settings value that should be a JSON object of column widths. */
@@ -259,6 +284,12 @@ const MIGRATIONS = [
     -- The tag filter lives in the URL now, and the sweep covers every watched repo
     -- regardless of it, so neither of these has a reader left.
     DELETE FROM settings WHERE key IN ('activeTags', 'scopeSweepToTags');`,
+
+    // A tag became a thing you configure rather than a name you type: what it is
+    // for, and a colour, so a row's chips are readable as a group at a glance.
+    // Both nullable — every tag that existed before this has neither.
+    `ALTER TABLE tags ADD COLUMN description TEXT;
+    ALTER TABLE tags ADD COLUMN color TEXT;`,
 ];
 
 /**
@@ -585,8 +616,12 @@ export class WatchStore {
     /** Every tag on an instance with its membership count, in creation order. */
     listTags(baseUrl: string): TagRecord[] {
         return this.db
-            .query<{ name: string; count: number }, [string]>(
-                `SELECT t.name AS name, COUNT(rt.repo_id) AS count
+            .query<
+                { name: string; count: number; description: string | null; color: string | null },
+                [string]
+            >(
+                `SELECT t.name AS name, COUNT(rt.repo_id) AS count,
+                        t.description AS description, t.color AS color
                  FROM tags t
                  LEFT JOIN repo_tags rt ON rt.tag_name = t.name AND rt.base_url = t.base_url
                  WHERE t.base_url = ?
@@ -594,7 +629,12 @@ export class WatchStore {
                  ORDER BY t.position ASC, t.name ASC`,
             )
             .all(baseUrl)
-            .map((row) => ({ name: row.name, count: row.count }));
+            .map((row) => ({
+                name: row.name,
+                count: row.count,
+                description: row.description,
+                color: row.color,
+            }));
     }
 
     /** Memberships for a whole instance in one query, keyed by repo id. */
@@ -625,7 +665,7 @@ export class WatchStore {
     }
 
     /** Creating an existing tag is a no-op, so import never has to check first. */
-    createTag(baseUrl: string, name: string): string {
+    createTag(baseUrl: string, name: string, fields: TagFields = {}): string {
         const tag = name.trim();
         if (!tag) throw new Error('A tag needs a name');
 
@@ -635,24 +675,75 @@ export class WatchStore {
 
         this.db
             .query(
-                `INSERT INTO tags (name, base_url, position, created_at) VALUES (?, ?, ?, ?)
+                `INSERT INTO tags (name, base_url, position, created_at, description, color)
+                 VALUES (?, ?, ?, ?, ?, ?)
                  ON CONFLICT(name, base_url) DO NOTHING`,
             )
-            .run(tag, baseUrl, next, new Date().toISOString());
+            .run(
+                tag,
+                baseUrl,
+                next,
+                new Date().toISOString(),
+                cleanDescription(fields.description),
+                cleanColor(fields.color),
+            );
 
         return tag;
     }
 
-    renameTag(baseUrl: string, from: string, to: string): boolean {
-        const target = to.trim();
-        if (!target || !this.hasTag(baseUrl, from)) return false;
+    /**
+     * The edit form's one call: a tag's name and what it carries change together
+     * or not at all, and an omitted field is left as it was rather than cleared.
+     */
+    updateTag(baseUrl: string, from: string, changes: TagFields & { name?: string }): boolean {
+        if (!this.hasTag(baseUrl, from)) return false;
+
+        const target = changes.name?.trim() || from;
         if (target !== from && this.hasTag(baseUrl, target)) {
             throw new Error(`${target} already exists`);
         }
 
+        const sets = ['name = ?'];
+        const values: (string | null)[] = [target];
+        if (changes.description !== undefined) {
+            sets.push('description = ?');
+            values.push(cleanDescription(changes.description));
+        }
+        if (changes.color !== undefined) {
+            sets.push('color = ?');
+            values.push(cleanColor(changes.color));
+        }
+
         // `ON UPDATE CASCADE` moves the memberships with the name.
-        this.db.query('UPDATE tags SET name = ? WHERE base_url = ? AND name = ?').run(target, baseUrl, from);
+        this.db
+            .query(`UPDATE tags SET ${sets.join(', ')} WHERE base_url = ? AND name = ?`)
+            .run(...values, baseUrl, from);
         return true;
+    }
+
+    renameTag(baseUrl: string, from: string, to: string): boolean {
+        return to.trim() ? this.updateTag(baseUrl, from, { name: to }) : false;
+    }
+
+    /**
+     * Import's direction: make the tag if it is missing, fill in what it has
+     * not got, and leave anything already set alone. A file's colour should not
+     * repaint a tag this board has already given one to — an import adds to a
+     * board, it does not take it over.
+     */
+    mergeTag(baseUrl: string, name: string, fields: TagFields = {}): string {
+        const tag = this.createTag(baseUrl, name, fields);
+
+        // COALESCE is the whole rule: the stored value where there is one, the
+        // file's where there is not.
+        this.db
+            .query(
+                `UPDATE tags SET description = COALESCE(description, ?), color = COALESCE(color, ?)
+                 WHERE base_url = ? AND name = ?`,
+            )
+            .run(cleanDescription(fields.description), cleanColor(fields.color), baseUrl, tag);
+
+        return tag;
     }
 
     deleteTag(baseUrl: string, name: string): boolean {
@@ -719,8 +810,13 @@ export class WatchStore {
             version: EXPORT_VERSION,
             exportedAt: new Date().toISOString(),
             settings: { pollPeriodSeconds, defaultRef },
-            // Listed whole, so a tag nothing carries yet still travels.
-            tags: this.listTags(baseUrl).map((tag) => tag.name),
+            // Listed whole, so a tag nothing carries yet still travels — with
+            // what it looks like, which a repo's membership list cannot say.
+            tags: this.listTags(baseUrl).map((tag) => ({
+                name: tag.name,
+                ...(tag.description ? { description: tag.description } : {}),
+                ...(tag.color ? { color: tag.color } : {}),
+            })),
             // Scoped like everything else here: an export is meant to be shared, and
             // the rows of an instance this board is not pointed at — an internal host
             // and its project paths — are nobody else's business.

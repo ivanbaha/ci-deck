@@ -34,6 +34,16 @@ function json<T>(path: string, method: string, body: unknown): Promise<T> {
 
 const repoPath = (id: number) => `/api/repos/${id}`;
 
+/**
+ * What the tag form sends. Absent means "leave it"; `null` means "clear it",
+ * which is how a description can be taken off a tag that had one.
+ */
+export type TagFields = {
+    name?: string;
+    description?: string | null;
+    color?: string | null;
+};
+
 /** Every settings write goes through the one endpoint; this names the fields. */
 type SettingsPatch = {
     pollPeriodSeconds?: number;
@@ -56,10 +66,11 @@ export const api = {
     resolveRepo: (repo: string) =>
         request<{ candidate: RepoCandidate }>(`/api/resolve?repo=${encodeURIComponent(repo)}`),
 
-    createTag: (name: string) => json<{ tags: TagView[] }>('/api/tags', 'POST', { name }),
+    createTag: (tag: TagFields) => json<{ tags: TagView[] }>('/api/tags', 'POST', tag),
 
-    renameTag: (from: string, name: string) =>
-        json<{ tags: TagView[] }>(`/api/tags/${encodeURIComponent(from)}`, 'PUT', { name }),
+    /** Only what is sent is written, so a partial patch leaves the rest alone. */
+    updateTag: (from: string, changes: TagFields) =>
+        json<{ tags: TagView[] }>(`/api/tags/${encodeURIComponent(from)}`, 'PUT', changes),
 
     deleteTag: (name: string) =>
         request<{ tags: TagView[] }>(`/api/tags/${encodeURIComponent(name)}`, { method: 'DELETE' }),

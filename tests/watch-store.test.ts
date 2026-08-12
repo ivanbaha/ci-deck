@@ -10,11 +10,15 @@ import {
     MAX_POLL_SECONDS,
     MIN_POLL_SECONDS,
     parseExportFile,
+    parseExportTags,
     StoreError,
     WatchStore,
 } from '../src/store/watch-store.ts';
 
 const HOST = 'https://gitlab.example.com/';
+
+/** A tag nobody has given a description or a colour, which is most of them. */
+const plainTag = (name: string, count: number) => ({ name, count, description: null, color: null });
 
 const repo = (name: string, projectId: number) => ({
     name,
@@ -316,7 +320,7 @@ describe('migrating a database keyed by name', () => {
         const alpha = store.findRepo(HOST, 'alpha', 'main')!;
 
         expect(store.tagsByRepo(HOST).get(alpha.id)).toEqual(['backs']);
-        expect(store.listTags(HOST)).toEqual([{ name: 'backs', count: 1 }]);
+        expect(store.listTags(HOST)).toEqual([plainTag('backs', 1)]);
         store.close();
     });
 
@@ -351,7 +355,7 @@ describe('watch list sharing', () => {
 
         const payload = store.exportList(HOST);
 
-        expect(payload.version).toBe(3);
+        expect(payload.version).toBe(4);
         expect(payload.settings.pollPeriodSeconds).toBe(180);
         expect(payload.repos).toEqual([
             {
@@ -415,6 +419,44 @@ describe('watch list sharing', () => {
 
     it('accepts a bare array and bare strings', () => {
         expect(parseExportFile(['alpha', ' beta ', ''])).toEqual([{ name: 'alpha' }, { name: 'beta' }]);
+    });
+
+    it('carries a tag’s description and colour through a round trip', () => {
+        const store = WatchStore.memory();
+        store.createTag(HOST, 'backs', { description: 'Backend services', color: '#1f75cb' });
+
+        const parsed = parseExportTags(JSON.parse(JSON.stringify(store.exportList(HOST))));
+
+        expect(parsed).toEqual([{ name: 'backs', description: 'Backend services', color: '#1f75cb' }]);
+    });
+
+    /** Version 3 files list tags as bare names, and still import as tags. */
+    it('reads a tag list of plain strings', () => {
+        expect(parseExportTags({ tags: ['lib', ' backs ', ''] }))
+            .toEqual([{ name: 'lib' }, { name: 'backs' }]);
+    });
+
+    it('takes a tag a repo names but the file never declared', () => {
+        expect(parseExportTags({ tags: ['lib'], repos: [{ name: 'alpha', tags: ['lib', 'backs'] }] }))
+            .toEqual([{ name: 'lib' }, { name: 'backs' }]);
+    });
+
+    it('drops a colour a file made up', () => {
+        expect(parseExportTags({ tags: [{ name: 'lib', color: 'rebeccapurple' }] }))
+            .toEqual([{ name: 'lib' }]);
+    });
+
+    it('fills a tag’s blanks on import without repainting one already set', () => {
+        const store = WatchStore.memory();
+        store.createTag(HOST, 'backs', { color: '#d1392b' });
+
+        store.mergeTag(HOST, 'backs', { description: 'Backend services', color: '#1f75cb' });
+        store.mergeTag(HOST, 'front', { color: '#2d8a4e' });
+
+        expect(store.listTags(HOST)).toEqual([
+            { name: 'backs', count: 0, description: 'Backend services', color: '#d1392b' },
+            { name: 'front', count: 0, description: null, color: '#2d8a4e' },
+        ]);
     });
 
     it('accepts entries with only a path', () => {
@@ -607,7 +649,61 @@ describe('tags', () => {
         store.createTag(HOST_A, 'backs');
         store.createTag(HOST_A, 'backs');
 
-        expect(store.listTags(HOST_A)).toEqual([{ name: 'backs', count: 0 }]);
+        expect(store.listTags(HOST_A)).toEqual([plainTag('backs', 0)]);
+    });
+
+    it('keeps a description and a colour against the tag', () => {
+        const { store } = seeded();
+        store.createTag(HOST_A, 'backs', { description: '  Backend services  ', color: '#1F75CB' });
+
+        expect(store.listTags(HOST_A)).toEqual([
+            { name: 'backs', count: 0, description: 'Backend services', color: '#1f75cb' },
+        ]);
+    });
+
+    /** Anything that is not six hex digits is no colour at all, not a stored string. */
+    it('drops a colour that is not a hex triplet', () => {
+        const { store } = seeded();
+        store.createTag(HOST_A, 'backs', { color: 'rebeccapurple' });
+        store.createTag(HOST_A, 'front', { color: '#abc' });
+
+        expect(store.listTags(HOST_A).map((tag) => tag.color)).toEqual([null, null]);
+    });
+
+    it('writes the fields an update names and leaves out the ones it does not', () => {
+        const { store } = seeded();
+        store.createTag(HOST_A, 'backs', { description: 'Backend services', color: '#1f75cb' });
+
+        store.updateTag(HOST_A, 'backs', { color: '#d1392b' });
+
+        expect(store.listTags(HOST_A)).toEqual([
+            { name: 'backs', count: 0, description: 'Backend services', color: '#d1392b' },
+        ]);
+    });
+
+    it('clears a description asked to be cleared, rather than ignoring the null', () => {
+        const { store } = seeded();
+        store.createTag(HOST_A, 'backs', { description: 'Backend services' });
+
+        store.updateTag(HOST_A, 'backs', { description: null });
+
+        expect(store.listTags(HOST_A)[0]!.description).toBeNull();
+    });
+
+    it('renames and recolours in one call, carrying the memberships across', () => {
+        const { store, id } = seeded();
+        store.setRepoTags(HOST_A, id('alpha'), ['backs']);
+
+        expect(store.updateTag(HOST_A, 'backs', { name: 'backend', color: '#2d8a4e' })).toBe(true);
+        expect(store.tagsByRepo(HOST_A).get(id('alpha'))).toEqual(['backend']);
+        expect(store.listTags(HOST_A)).toEqual([
+            { name: 'backend', count: 1, description: null, color: '#2d8a4e' },
+        ]);
+    });
+
+    it('reports an update to a tag that is not there', () => {
+        const { store } = seeded();
+        expect(store.updateTag(HOST_A, 'nothing', { color: '#2d8a4e' })).toBe(false);
     });
 
     it('puts one row in several tags and one tag on several rows', () => {
@@ -617,9 +713,9 @@ describe('tags', () => {
 
         expect(store.tagsByRepo(HOST_A).get(id('alpha'))).toEqual(['lib', 'backs', 'CRUDs']);
         expect(store.listTags(HOST_A)).toEqual([
-            { name: 'lib', count: 2 },
-            { name: 'backs', count: 2 },
-            { name: 'CRUDs', count: 1 },
+            plainTag('lib', 2),
+            plainTag('backs', 2),
+            plainTag('CRUDs', 1),
         ]);
     });
 
@@ -656,7 +752,7 @@ describe('tags', () => {
 
         expect(store.setTagRepos(HOST_A, 'backs', [id('alpha'), id('gamma'), 999]))
             .toEqual([id('alpha'), id('gamma')]);
-        expect(store.listTags(HOST_A)).toEqual([{ name: 'backs', count: 2 }]);
+        expect(store.listTags(HOST_A)).toEqual([plainTag('backs', 2)]);
     });
 
     it('renames a tag and carries its memberships across', () => {
@@ -689,7 +785,7 @@ describe('tags', () => {
         store.removeRepo(id('alpha'));
 
         expect(store.tagsByRepo(HOST_A).size).toBe(0);
-        expect(store.listTags(HOST_A)).toEqual([{ name: 'backs', count: 0 }]);
+        expect(store.listTags(HOST_A)).toEqual([plainTag('backs', 0)]);
     });
 
     it('keeps tags on separate instances apart', () => {
@@ -708,8 +804,8 @@ describe('tags', () => {
 
         const file = store.exportList(HOST_A);
 
-        expect(file.version).toBe(3);
-        expect(file.tags).toEqual(['lib', 'backs', 'unused']);
+        expect(file.version).toBe(4);
+        expect(file.tags).toEqual([{ name: 'lib' }, { name: 'backs' }, { name: 'unused' }]);
         expect(file.repos.find((r) => r.name === 'alpha')?.tags).toEqual(['lib', 'backs']);
         expect(file.repos.find((r) => r.name === 'beta')?.tags).toEqual([]);
     });

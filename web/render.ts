@@ -4,6 +4,7 @@ import { formatAbsolute, formatClock, formatRelative, h } from './dom.ts';
 import { icon, type IconName } from './icons.ts';
 import type { OpenStage } from './stage-popover.ts';
 import { CANCELABLE, statusClass, statusIcon, statusKind, statusLabel } from './status.ts';
+import { tagChip, tagLine } from './tag-style.ts';
 
 export type TabKey = 'all' | 'failed' | 'running' | 'passed' | 'other';
 
@@ -82,31 +83,32 @@ function statusCell(repo: RepoView): HTMLElement {
 }
 
 /**
- * The row's tags, and the way to change them. Kept to two before it collapses to
- * a count — at the sizes this is built for a repo can carry half a dozen, and a
+ * What the row carries, and only that. Kept to two before it collapses to a
+ * count — at the sizes this is built for a repo can carry half a dozen, and a
  * row that wraps to fit them all is worse than one that says "+4".
+ *
+ * Not a control. Which repos carry a tag is set in Configuration → Tags, or on
+ * the way in when a repo is added; a row with nothing on it shows nothing.
  */
-function tagsCluster(repo: RepoView): HTMLElement {
+function tagsCluster(repo: RepoView): HTMLElement | null {
+    if (repo.tags.length === 0) return null;
+
     const shown = repo.tags.slice(0, 2);
-    const extra = repo.tags.length - shown.length;
+    const hidden = repo.tags.slice(shown.length);
 
     return h(
-        'button',
-        {
-            type: 'button',
-            class: `repo-tags${repo.tags.length === 0 ? ' repo-tags-empty' : ''}`,
-            'data-action': 'edit-tags',
-            'data-repo': String(repo.id),
-            // The cluster shows two and counts the rest; the tip has them all.
-            'data-tip-title': repo.tags.length > 0 ? 'Tags' : null,
-            'data-tip': repo.tags.length > 0 ? repo.tags.join('\n') : `Add tags to ${repo.name}`,
-            'aria-label': repo.tags.length > 0
-                ? `Tags of ${repo.name}: ${repo.tags.join(', ')}`
-                : `Add tags to ${repo.name}`,
-        },
-        ...shown.map((tag) => h('span', { class: 'tag-chip', text: tag })),
-        extra > 0 ? h('span', { class: 'tag-chip tag-chip-more', text: `+${extra}` }) : null,
-        repo.tags.length === 0 ? icon('tag', 12) : null,
+        'span',
+        { class: 'repo-tags' },
+        ...shown.map((tag) => tagChip(tag)),
+        // The count stands in for the tags it hides, so it says which they are.
+        hidden.length > 0
+            ? h('span', {
+                class: 'tag-chip tag-chip-more',
+                text: `+${hidden.length}`,
+                'data-tip-title': `${hidden.length} more`,
+                'data-tip': hidden.map(tagLine).join('\n'),
+            })
+            : null,
     );
 }
 
@@ -135,14 +137,20 @@ function repoCell(repo: RepoView): HTMLElement {
             // The branch belongs to the name, not to the tags: two rows for one
             // repo differ only here. Long ones clip, so the whole ref is a hover
             // away — a `refs/heads/feature/…` name is otherwise unreadable.
-            h('span', {
-                class: 'chip repo-ref',
-                text: repo.ref,
-                'data-tip-title': 'Branch',
-                'data-tip': repo.branchMissing
-                    ? `${repo.ref}\nNo longer exists on GitLab.`
-                    : repo.ref,
-            }),
+            h(
+                'span',
+                {
+                    class: 'chip repo-ref',
+                    'data-tip-title': 'Branch',
+                    'data-tip': repo.branchMissing
+                        ? `${repo.ref}\nNo longer exists on GitLab.`
+                        : repo.ref,
+                },
+                icon('branch', 10),
+                // The name clips, not the chip: an ellipsis where the branch runs
+                // out of room, with the glyph still on the left of it.
+                h('span', { class: 'repo-ref-name', text: repo.ref }),
+            ),
         ),
         h(
             'span',

@@ -21,18 +21,16 @@
     <main class="wrap">
         <nav class="tabs" id="tabs" aria-label="Filter by status"></nav>
 
-        <!-- Tags narrow the board across namespaces; sections stay by namespace. -->
-        <div class="tagbar" id="tagbar" aria-label="Filter by tag"></div>
-
-        <!-- Everything about the sweep lives here, right above the bar it drives. -->
+        <!-- One line of filters, then everything about the sweep. Tags narrow the
+             board across namespaces; sections stay by namespace. -->
         <div class="toolbar">
             <input type="search" class="input input-search" id="search" placeholder="Search repos"
                 aria-label="Search repos">
             <select class="input" id="group" aria-label="Filter by group"></select>
-            <span class="toolbar-spacer"></span>
+            <div class="tagbar" id="tagbar" aria-label="Filter by tag"></div>
             <span class="sweep" id="sweep" aria-live="polite"></span>
-            <label class="field" for="interval">Refresh every</label>
-            <select class="input" id="interval" aria-label="Refresh interval"></select>
+            <select class="input" id="interval" aria-label="Refresh interval"
+                data-tip="How often every watched repo is checked"></select>
             <span class="actions" id="sweep-actions"></span>
         </div>
 

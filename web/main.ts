@@ -23,7 +23,8 @@ import { announce } from './notify.ts';
 import { renderGroupHeader, renderRepo, repoTab, type TabKey } from './render.ts';
 import { closeSetup, openSetup } from './setup.ts';
 import * as popover from './stage-popover.ts';
-import { openRepoTags, renderTagBar, repoLabel } from './tags.ts';
+import { setTagStyles } from './tag-style.ts';
+import { renderTagBar, repoLabel } from './tags.ts';
 import { applyTheme, restoreTheme } from './theme.ts';
 import { toastError, toastInfo } from './toast.ts';
 import { initTooltips } from './tooltip.ts';
@@ -285,27 +286,25 @@ function filterMatches(): RepoView[] {
 /**
  * The filter is saved as an explicit membership list, not as a rule. Nothing is
  * inferred from the name — the search just spares you ticking sixty boxes once.
+ *
+ * Hands the whole thing to the tag manager rather than making the tag here: it
+ * is the same tag as any other, and it should be named, described and coloured
+ * in the same form, with the rows it will carry already ticked behind it.
  */
-async function saveFilterAsTag(): Promise<void> {
-    const matches = filterMatches();
-    const name = window.prompt(`Save these ${matches.length} rows as a tag named:`)?.trim();
-    if (!name) return;
-
-    try {
-        await api.createTag(name).catch((error) => {
-            // An existing name is fine: this replaces its membership.
-            if (!String(error?.message ?? '').includes('already exists')) throw error;
-        });
-        const result = await api.setTagRepos(name, matches.map((repo) => repo.id));
-        toastInfo(`${name}: ${result.repos.length} row${result.repos.length === 1 ? '' : 's'}`);
-        await reload();
-    } catch (error) {
-        toastError(error);
-    }
+function saveFilterAsTag(): void {
+    openConfig(configOptions, 'tags', {
+        // What was typed is the obvious name for what it matched. The group is
+        // the next best thing when the narrowing came from there.
+        name: view.search.trim() || (view.group === 'all' ? '' : view.group),
+        repos: filterMatches().map((repo) => repo.id),
+    });
 }
 
 function renderTagbar(): void {
     const matches = filterMatches();
+
+    // Before any row is drawn: the chips on a row take their colour from here.
+    setTagStyles(tags());
 
     renderTagBar({
         container: tagbar,
@@ -321,8 +320,7 @@ function renderTagbar(): void {
                     : [...view.tags, tag],
             }),
         onClear: () => updateView({ tags: [] }),
-        onManage: () => openConfig(configOptions, 'tags'),
-        onSaveFilter: () => void saveFilterAsTag(),
+        onSaveFilter: saveFilterAsTag,
     });
 }
 
@@ -552,7 +550,10 @@ function renderSweep(): void {
     if (sweep.running) {
         const percent = sweep.total === 0 ? 0 : Math.round((sweep.index / sweep.total) * 100);
         progressBar.style.width = `${percent}%`;
-        sweepLabel.textContent = `checking ${sweep.index}/${sweep.total}${sweep.currentRepo ? ` · ${sweep.currentRepo}` : ''}`;
+        // The count only. Naming the repo being checked made this box as wide as
+        // the longest repo on the board and back again, twice a second, which
+        // moved the interval control and the button beside it with it.
+        sweepLabel.textContent = `checking ${sweep.index}/${sweep.total}`;
         return;
     }
 
@@ -606,6 +607,8 @@ function handleEvent(event: ServerEvent): void {
             if (!state) return;
             state.tags = event.tags;
             renderTagbar();
+            // A recoloured or renamed tag is on every row that carries it.
+            renderAll();
             break;
         case 'repo':
             applyRepo(event.repo);
@@ -667,11 +670,6 @@ async function onAction(action: string, target: HTMLElement): Promise<void> {
     if (action === 'stage') {
         const stage = repo.stages.find((entry) => entry.name === target.dataset.stage);
         if (stage) popover.toggle(target, repo, stage, stageHandlers);
-        return;
-    }
-
-    if (action === 'edit-tags') {
-        openRepoTags(repo, tags(), () => void reload());
         return;
     }
 

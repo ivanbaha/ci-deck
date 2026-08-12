@@ -4,122 +4,239 @@ import { button } from './button.ts';
 import { h } from './dom.ts';
 import { icon } from './icons.ts';
 import { confirmDialog, openModal } from './modal.ts';
-import { toastInfo } from './toast.ts';
-
-/**
- * A chip input over the known tags. Deliberately not a combo box: typing a name
- * that does not exist yet creates it, because the alternative is a two-step
- * "create the tag, then come back and apply it" every time.
- */
-export function tagPicker(known: TagView[], initial: string[]): {
-    element: HTMLElement;
-    value(): string[];
-} {
-    const chosen = [...new Set(initial)];
-    const chips = h('div', { class: 'tag-chips' });
-
-    const input = h('input', {
-        type: 'text',
-        class: 'input tag-input',
-        placeholder: chosen.length === 0 ? 'lib, backs, CRUDs…' : 'add another…',
-        list: 'known-tags',
-        autocomplete: 'off',
-    });
-
-    const options = h(
-        'datalist',
-        { id: 'known-tags' },
-        ...known.map((tag) => h('option', { value: tag.name })),
-    );
-
-    const draw = () => {
-        chips.replaceChildren(
-            ...chosen.map((tag) =>
-                h(
-                    'span',
-                    { class: 'tag-chip tag-chip-editable' },
-                    h('span', { text: tag }),
-                    button({
-                        label: `Remove ${tag}`,
-                        icon: 'close',
-                        small: true,
-                        iconSize: 11,
-                        onClick: () => {
-                            chosen.splice(chosen.indexOf(tag), 1);
-                            draw();
-                        },
-                    }),
-                )
-            ),
-        );
-    };
-
-    const commit = () => {
-        // Commas split, so a whole set can be pasted in one go.
-        for (const raw of input.value.split(',')) {
-            const tag = raw.trim();
-            if (tag && !chosen.includes(tag)) chosen.push(tag);
-        }
-        input.value = '';
-        draw();
-    };
-
-    input.addEventListener('keydown', (event) => {
-        if (event.key === 'Enter' || event.key === ',') {
-            event.preventDefault();
-            commit();
-        } else if (event.key === 'Backspace' && input.value === '' && chosen.length > 0) {
-            chosen.pop();
-            draw();
-        }
-    });
-    input.addEventListener('blur', commit);
-    input.addEventListener('change', commit);
-
-    draw();
-
-    return {
-        element: h('div', { class: 'tag-picker' }, chips, input, options),
-        value: () => {
-            commit();
-            return [...chosen];
-        },
-    };
-}
+import { colorChip, colorDot, paint } from './tag-style.ts';
 
 /** A row's name, and its branch when that is not the only thing it says. */
 export function repoLabel(repo: RepoView): string {
     return `${repo.name} · ${repo.ref}`;
 }
 
-/** The per-repo path: discoverable, for one-off changes. */
-export function openRepoTags(repo: RepoView, known: TagView[], onDone: () => void): void {
-    const modal = openModal({ title: [`Tags for ${repoLabel(repo)}`], small: true });
-    const picker = tagPicker(known, repo.tags);
+/**
+ * Ten colours a tag can be, spread around the wheel at one lightness so no two
+ * are hard to tell apart and none of them disappears into either theme.
+ */
+const SWATCHES = [
+    '#d1392b',
+    '#c26a00',
+    '#8f7300',
+    '#2d8a4e',
+    '#00857f',
+    '#1f75cb',
+    '#5b57c9',
+    '#8b4bbd',
+    '#bd4083',
+    '#737278',
+] as const;
+
+const HEX = /^#[0-9a-f]{6}$/i;
+
+/**
+ * "Save this filter as a tag": a name to start the form with, and the rows the
+ * board had narrowed itself to when it was asked.
+ */
+export interface TagSeed {
+    name: string;
+    repos: number[];
+}
+
+/**
+ * The one form a tag is made and changed in.
+ *
+ * Opens over the configuration window rather than replacing it: the tag list
+ * behind it is the thing being edited, and modals stack for exactly this.
+ */
+export function tagFormDialog(options: {
+    /** The tag to edit, or null to make a new one. */
+    tag: TagView | null;
+    /** A name to start from, when something else already knows what to call it. */
+    name?: string;
+    /** What the caller is about to do with the tag, said before it is made. */
+    hint?: string;
+    onSaved(tags: TagView[]): void;
+}): void {
+    const editing = options.tag;
+    const modal = openModal({
+        title: [icon('tag', 16), editing ? `Edit ${editing.name}` : 'New tag'],
+        small: true,
+    });
+
+    let color: string | null = editing ? editing.color : SWATCHES[5];
+
+    const name = h('input', {
+        type: 'text',
+        class: 'input',
+        id: 'tag-form-name',
+        value: editing?.name ?? options.name ?? '',
+        placeholder: 'release-blocking',
+        autocomplete: 'off',
+    });
+    const description = h('input', {
+        type: 'text',
+        class: 'input',
+        id: 'tag-form-description',
+        value: editing?.description ?? '',
+        placeholder: 'What the tag is for',
+        autocomplete: 'off',
+    });
+
+    // Three ways at one value, because they answer different questions: the
+    // swatches are "give me a sensible one", the well is "I know the one I
+    // want", and the field is "paste the one from our palette".
+    const hex = h('input', {
+        type: 'text',
+        class: 'input tag-hex',
+        value: color ?? '',
+        placeholder: '#1f75cb',
+        maxLength: 7,
+        spellcheck: false,
+        autocomplete: 'off',
+        'aria-label': 'Colour as a hex code',
+    });
+    const well = h('input', {
+        type: 'color',
+        class: 'tag-well',
+        value: color ?? '#1f75cb',
+        'aria-label': 'Pick a colour',
+    });
+
+    const preview = h('div', { class: 'tag-preview' });
+    const swatches = h('div', { class: 'tag-swatches' });
     const error = h('div', { class: 'form-error', role: 'alert' });
 
-    const save = button({ label: 'Save tags', text: 'Save', variant: 'confirm' });
-    const cancel = button({ label: 'Cancel', text: 'Cancel' });
+    const drawPreview = () => {
+        preview.replaceChildren(
+            colorChip(name.value.trim() || 'tag', color),
+            h('span', { class: 'hint', text: 'How the chip reads on a row' }),
+        );
+    };
 
-    save.addEventListener('click', async () => {
+    const drawSwatches = () => {
+        swatches.replaceChildren(
+            ...SWATCHES.map((value) => {
+                const chosen = color?.toLowerCase() === value;
+                const cell = h('button', {
+                    type: 'button',
+                    class: `swatch${chosen ? ' is-chosen' : ''}`,
+                    'aria-pressed': String(chosen),
+                    'data-tip': value,
+                    'aria-label': `Colour ${value}`,
+                    onClick: () => pick(value),
+                });
+                cell.style.setProperty('--tag-color', value);
+                return cell;
+            }),
+            // A tag with no colour at all stays possible: that is what every tag
+            // made before this form looked like, and some of them should stay so.
+            h('button', {
+                type: 'button',
+                class: `swatch swatch-none${color ? '' : ' is-chosen'}`,
+                'aria-pressed': String(color === null),
+                'data-tip': 'No colour',
+                'aria-label': 'No colour',
+                onClick: () => pick(null),
+            }, icon('close', 12)),
+        );
+    };
+
+    const pick = (value: string | null) => {
+        color = value;
+        hex.value = value ?? '';
+        if (value) well.value = value;
+        drawSwatches();
+        drawPreview();
+    };
+
+    hex.addEventListener('input', () => {
+        const value = hex.value.trim();
+        if (!value) pickQuietly(null);
+        else if (HEX.test(value)) pickQuietly(value.toLowerCase());
+    });
+    well.addEventListener('input', () => pick(well.value));
+    name.addEventListener('input', drawPreview);
+
+    /** Typing is not a moment to move the field the typing is happening in. */
+    const pickQuietly = (value: string | null) => {
+        color = value;
+        if (value) well.value = value;
+        drawSwatches();
+        drawPreview();
+    };
+
+    const cancel = button({ label: 'Cancel', text: 'Cancel' });
+    const save = button({
+        label: editing ? 'Save the tag' : 'Create the tag',
+        text: editing ? 'Save' : 'Create',
+        variant: 'confirm',
+    });
+
+    const run = async () => {
+        const wanted = name.value.trim();
+        if (!wanted) {
+            error.textContent = 'A tag needs a name';
+            name.focus();
+            return;
+        }
+        if (hex.value.trim() && !HEX.test(hex.value.trim())) {
+            error.textContent = 'A colour is six hex digits, like #1f75cb';
+            hex.focus();
+            return;
+        }
+
         save.disabled = true;
+        cancel.disabled = true;
+        const fields = { name: wanted, description: description.value.trim() || null, color };
+
         try {
-            await api.setRepoTags(repo.id, picker.value());
-            onDone();
+            const result = editing
+                ? await api.updateTag(editing.name, fields)
+                : await api.createTag(fields);
+            options.onSaved(result.tags);
             modal.close();
         } catch (failure) {
             error.textContent = failure instanceof Error ? failure.message : String(failure);
             save.disabled = false;
+            cancel.disabled = false;
         }
-    });
+    };
+
+    for (const field of [name, description, hex]) {
+        field.addEventListener('keydown', (event) => {
+            if (event.key === 'Enter') {
+                event.preventDefault();
+                void run();
+            }
+        });
+    }
     cancel.addEventListener('click', () => modal.close());
+    save.addEventListener('click', () => void run());
+
+    drawSwatches();
+    drawPreview();
 
     modal.body.append(
-        h('div', { class: 'form-row' }, h('label', { text: 'Tags' }), picker.element,
-            h('span', { class: 'hint', text: 'Comma or Enter to add. A name that does not exist yet is created.' })),
+        // Spread rather than a null: `append` is the DOM's, and it would take a
+        // null for the string "null" and render it.
+        ...(options.hint ? [h('p', { class: 'form-note', text: options.hint })] : []),
+        h('div', { class: 'form-row' }, h('label', { for: 'tag-form-name', text: 'Name' }), name),
+        h(
+            'div',
+            { class: 'form-row' },
+            h('label', { for: 'tag-form-description', text: 'Description' }),
+            description,
+            h('span', { class: 'hint', text: 'Optional. Shown when a row’s tags are hovered.' }),
+        ),
+        h(
+            'div',
+            { class: 'form-row' },
+            h('label', { text: 'Colour' }),
+            swatches,
+            h('div', { class: 'tag-color-row' }, well, hex, preview),
+        ),
         error,
     );
     modal.footer.append(h('span', { class: 'spacer' }), cancel, save);
+    name.focus();
+    name.select();
 }
 
 /**
@@ -135,23 +252,43 @@ export function tagsPane(options: {
     tags(): TagView[];
     /** Pulls the board again, since a membership change moves many rows at once. */
     onChange(): void;
+    /** A tag the board wants made, with the rows it should carry. */
+    seed?: TagSeed;
 }): HTMLElement {
     let tags = [...options.tags()];
     let selected = tags[0]?.name ?? null;
     let members = new Set<number>();
     let filter = '';
 
+    /**
+     * One membership write at a time. Every call sends the tag's whole list, so
+     * two of them in flight would settle in whatever order they happened to
+     * land — which, ticking down a column of boxes, is not the order they were
+     * ticked in.
+     */
+    let queue: Promise<void> = Promise.resolve();
+
     const tagList = h('div', { class: 'tag-manage-list' });
     const memberPane = h('div', { class: 'tag-manage-members' });
     const error = h('div', { class: 'form-error', role: 'alert' });
+    // Lives out here because a tick updates it without redrawing the list under
+    // the pointer — forty boxes rebuilt on every click is forty chances to miss.
+    const countLabel = () => `${members.size} selected`;
+    const count = h('span', { class: 'muted', text: countLabel() });
 
     const membersOf = (tag: string) =>
         new Set(options.repos().filter((repo) => repo.tags.includes(tag)).map((repo) => repo.id));
 
-    const select = (tag: string | null) => {
+    /**
+     * `carrying` is for the case where the board cannot be asked yet: a write
+     * that just landed is on its way back over the event stream, and reading the
+     * rows now would show the membership as it was a moment ago.
+     */
+    const select = (tag: string | null, carrying?: Set<number>) => {
         selected = tag;
-        members = tag ? membersOf(tag) : new Set();
+        members = tag ? (carrying ?? membersOf(tag)) : new Set();
         filter = '';
+        count.textContent = countLabel();
         drawTags();
         drawMembers();
     };
@@ -170,13 +307,16 @@ export function tagsPane(options: {
                     h('button', {
                         type: 'button',
                         class: 'tag-manage-pick',
+                        'data-tip-title': tag.name,
+                        'data-tip': tag.description
+                            ?? `${tag.count} row${tag.count === 1 ? '' : 's'} carry it`,
                         onClick: () => select(tag.name),
-                    }, h('span', { class: 'tag-manage-name', text: tag.name }), h('span', { class: 'group-count', text: String(tag.count) })),
+                    }, colorDot(tag.color), h('span', { class: 'tag-manage-name', text: tag.name }), h('span', { class: 'group-count', text: String(tag.count) })),
                     button({
-                        label: `Rename ${tag.name}`,
-                        icon: 'cog',
+                        label: `Edit ${tag.name}`,
+                        icon: 'pencil',
                         small: true,
-                        onClick: () => void rename(tag.name),
+                        onClick: () => edit(tag),
                     }),
                     button({
                         label: `Delete ${tag.name}`,
@@ -189,7 +329,7 @@ export function tagsPane(options: {
             ),
         );
         if (tags.length === 0) {
-            tagList.appendChild(h('p', { class: 'hint', text: 'No tags yet. Create one below.' }));
+            tagList.appendChild(h('p', { class: 'hint', text: 'No tags yet. Add one with +.' }));
         }
     }
 
@@ -228,11 +368,7 @@ export function tagsPane(options: {
             { class: 'tag-member-list' },
             ...matching.map((repo) => {
                 const box = h('input', { type: 'checkbox', checked: members.has(repo.id) });
-                box.addEventListener('change', () => {
-                    if (box.checked) members.add(repo.id);
-                    else members.delete(repo.id);
-                    count.textContent = `${members.size} selected`;
-                });
+                box.addEventListener('change', () => toggle(repo.id, box.checked, box));
                 return h(
                     'label',
                     { class: 'tag-member' },
@@ -245,65 +381,49 @@ export function tagsPane(options: {
         );
         if (matching.length === 0) list.appendChild(h('p', { class: 'hint', text: 'Nothing matches.' }));
 
-        const count = h('span', { class: 'muted', text: `${members.size} selected` });
-
-        const all = button({
-            label: 'Select every repo shown',
-            text: 'All shown',
-            small: true,
-            onClick: () => {
-                for (const repo of matching) members.add(repo.id);
-                drawMembers();
-            },
-        });
-        const none = button({
-            label: 'Clear the selection',
-            text: 'None',
-            small: true,
-            onClick: () => {
-                members.clear();
-                drawMembers();
-            },
-        });
-        const apply = button({
-            label: `Save which repos carry ${selected}`,
-            text: 'Apply',
-            variant: 'confirm',
-            small: true,
-            onClick: () => void save(),
-        });
-
         memberPane.replaceChildren(
-            h('div', { class: 'tag-member-head' }, search, all, none, h('span', { class: 'spacer' }), count, apply),
+            h(
+                'div',
+                { class: 'tag-member-head' },
+                search,
+                h('span', { class: 'spacer' }),
+                count,
+                h('span', { class: 'hint', text: 'Saved as you tick.' }),
+            ),
             list,
         );
     }
 
-    async function save(): Promise<void> {
-        if (!selected) return;
-        try {
-            const result = await api.setTagRepos(selected, [...members]);
-            tags = result.tags;
-            toastInfo(`${selected}: ${result.repos.length} row${result.repos.length === 1 ? '' : 's'}`);
-            refresh();
-            drawTags();
-        } catch (failure) {
-            error.textContent = failure instanceof Error ? failure.message : String(failure);
-        }
-    }
+    /**
+     * A tick is the save. There was an Apply button here, which meant a pane you
+     * could close having changed nothing you thought you had changed — and the
+     * board updates itself off the write, so there is nothing to wait for.
+     */
+    function toggle(repoId: number, on: boolean, box: HTMLInputElement): void {
+        const tag = selected;
+        if (!tag) return;
 
-    async function rename(from: string): Promise<void> {
-        const next = window.prompt(`Rename "${from}" to:`, from)?.trim();
-        if (!next || next === from) return;
-        try {
-            tags = (await api.renameTag(from, next)).tags;
-            if (selected === from) selected = next;
-            refresh();
-            drawTags();
-            drawMembers();
-        } catch (failure) {
-            error.textContent = failure instanceof Error ? failure.message : String(failure);
-        }
+        if (on) members.add(repoId);
+        else members.delete(repoId);
+        count.textContent = countLabel();
+
+        const wanted = [...members];
+        queue = queue.then(async () => {
+            try {
+                tags = (await api.setTagRepos(tag, wanted)).tags;
+                error.textContent = '';
+                drawTags();
+            } catch (failure) {
+                error.textContent = failure instanceof Error ? failure.message : String(failure);
+                // Put it back: the row does not carry the tag, whatever the box says.
+                if (on) members.delete(repoId);
+                else members.add(repoId);
+                if (tag === selected) {
+                    box.checked = !on;
+                    count.textContent = countLabel();
+                }
+            }
+        });
     }
 
     async function remove(name: string): Promise<void> {
@@ -325,32 +445,56 @@ export function tagsPane(options: {
         }
     }
 
-    const newTag = h('input', { type: 'text', class: 'input', placeholder: 'New tag name', 'aria-label': 'New tag name' });
-    const create = button({
-        label: 'Create the tag',
-        icon: 'plus',
-        text: 'Create',
-        onClick: async () => {
-            const name = newTag.value.trim();
-            if (!name) return;
-            try {
-                tags = (await api.createTag(name)).tags;
-                newTag.value = '';
-                select(name);
+    /**
+     * Both directions of the form: `tag` is null when making a new one, and a
+     * `seed` is the board asking for one — a name to start from and the rows the
+     * filter behind it had matched, which become the new tag's membership.
+     */
+    function edit(tag: TagView | null, seed?: TagSeed): void {
+        tagFormDialog({
+            tag,
+            name: seed?.name,
+            hint: seed
+                ? `${seed.repos.length} row${seed.repos.length === 1 ? '' : 's'} match the filter on the board. They will carry this tag.`
+                : undefined,
+            onSaved: (next) => {
+                const before = tags.map((entry) => entry.name);
+                tags = next;
+                // A rename moves the selection with it, and a new tag takes it:
+                // whichever name is in the list that was not there before.
+                const added = next.find((entry) => !before.includes(entry.name));
+                if (added && seed) void carry(added.name, seed.repos);
+                else if (added && (tag === null || tag.name === selected)) select(added.name);
+                else if (tag && tag.name === selected) select(selected);
+                else drawTags();
                 refresh();
-            } catch (failure) {
-                error.textContent = failure instanceof Error ? failure.message : String(failure);
-            }
-        },
-    });
-    newTag.addEventListener('keydown', (event) => {
-        if (event.key === 'Enter') {
-            event.preventDefault();
-            create.click();
+            },
+        });
+    }
+
+    /** The membership a seeded tag was made for, applied the moment it exists. */
+    async function carry(tag: string, repos: number[]): Promise<void> {
+        select(tag, new Set(repos));
+        try {
+            tags = (await api.setTagRepos(tag, repos)).tags;
+            error.textContent = '';
+            drawTags();
+        } catch (failure) {
+            error.textContent = failure instanceof Error ? failure.message : String(failure);
+            select(tag);
         }
+    }
+
+    const add = button({
+        label: 'Create a tag',
+        icon: 'plus',
+        small: true,
+        onClick: () => edit(null),
     });
 
     select(selected);
+    // The board asked for a tag on the way in, so the form is already open.
+    if (options.seed) edit(null, options.seed);
 
     return h(
         'div',
@@ -361,9 +505,14 @@ export function tagsPane(options: {
             h(
                 'div',
                 { class: 'tag-manage-side' },
-                h('h3', { class: 'popover-title', text: 'Tags' }),
+                h(
+                    'div',
+                    { class: 'tag-manage-head' },
+                    h('h3', { class: 'popover-title', text: 'Tags' }),
+                    h('span', { class: 'spacer' }),
+                    add,
+                ),
                 tagList,
-                h('div', { class: 'tag-manage-new' }, newTag, create),
             ),
             h('div', { class: 'tag-manage-main' }, memberPane),
         ),
@@ -372,11 +521,64 @@ export function tagsPane(options: {
 }
 
 /**
- * The chips under the status tabs: the board's tag filter.
+ * Big chips on one line where they fit, small ones over two where they do not.
+ *
+ * Measured rather than guessed: a chip is as wide as its name, and how many
+ * names fit depends on the window, the group select beside it and how much the
+ * search field was given. Two passes at most — full size, and if that wrapped,
+ * compact — because the compact pass can only ever fit more.
+ *
+ * A width of zero is a bar that has not been laid out yet, which a background
+ * tab can stay in for as long as it likes. Measuring that would compact a bar
+ * that has all the room in the world, so it waits for the observer instead.
+ */
+function fitTagBar(container: HTMLElement): void {
+    const width = container.clientWidth;
+    if (width === 0) return;
+
+    fittedAt = width;
+    container.classList.remove('is-compact');
+    if (lineCount(container) > 1) container.classList.add('is-compact');
+}
+
+/** How many rows the chips have wrapped onto, by where their tops sit. */
+function lineCount(container: HTMLElement): number {
+    const tops = new Set<number>();
+    for (const child of container.children) tops.add((child as HTMLElement).offsetTop);
+    return tops.size;
+}
+
+/** The width the chips were last fitted to, so the observer can ignore the rest. */
+let fittedAt = -1;
+let observer: ResizeObserver | null = null;
+
+/**
+ * The bar is not resized only by the window: the search field, the group select
+ * and the sweep box all take from the same line, and a tab that was never shown
+ * gets its first real width the moment it is. Watching the element catches all
+ * of it, where a window listener catches one.
+ *
+ * Only a change of width re-fits — compacting changes the bar's height, and
+ * reacting to that would be a loop.
+ */
+function watchTagBar(container: HTMLElement): void {
+    if (observer) return;
+
+    observer = new ResizeObserver(() => {
+        if (container.clientWidth !== fittedAt) fitTagBar(container);
+    });
+    observer.observe(container);
+}
+
+/**
+ * The chips in the toolbar: the board's tag filter.
  *
  * Filtering only. It narrows what is on screen and nothing else — the sweep still
  * covers every watched repo, so a tag you have not selected is still a tag that
  * can tell you its pipeline broke.
+ *
+ * No management here. Making, editing and deleting tags is Configuration → Tags,
+ * so this bar is only ever the tags themselves.
  */
 export function renderTagBar(options: {
     container: HTMLElement;
@@ -384,54 +586,16 @@ export function renderTagBar(options: {
     active: string[];
     onToggle(tag: string): void;
     onClear(): void;
-    onManage(): void;
     onSaveFilter(): void;
     saveable: boolean;
 }): void {
     const { container, tags, active } = options;
     container.replaceChildren();
 
-    if (tags.length === 0 && !options.saveable) {
-        container.append(
-            button({
-                label: 'Create and manage tags',
-                icon: 'tag',
-                text: 'Tags',
-                small: true,
-                onClick: options.onManage,
-            }),
-            h('span', { class: 'hint', text: 'Group repos across namespaces however you like.' }),
-        );
-        return;
-    }
-
-    container.append(
-        h('span', { class: 'tagbar-label' }, icon('tag', 13), h('span', { text: 'Tags' })),
-        ...tags.map((tag) => {
-            const on = active.includes(tag.name);
-            return h(
-                'button',
-                {
-                    type: 'button',
-                    class: `tag-chip tag-chip-filter${on ? ' is-active' : ''}`,
-                    'aria-pressed': String(on),
-                    'data-tip': `${tag.count} row${tag.count === 1 ? '' : 's'}${
-                        on ? ' — click to stop filtering by this' : ' — click to filter by this'
-                    }`,
-                    onClick: () => options.onToggle(tag.name),
-                },
-                h('span', { text: tag.name }),
-                h('span', { class: 'tag-chip-count', text: String(tag.count) }),
-            );
-        }),
-    );
-
-    if (active.length > 0) {
-        container.append(
-            button({ label: 'Clear the tag filter', text: 'Clear', small: true, onClick: options.onClear }),
-        );
-    }
-
+    // Ahead of the chips: it appears and disappears with the filter behind it,
+    // and at the end it would shunt the whole row sideways every time it did.
+    // Only when the search or the group has narrowed the board to something a
+    // tag could stand for — otherwise there is nothing to save.
     if (options.saveable) {
         container.append(
             button({
@@ -445,7 +609,48 @@ export function renderTagBar(options: {
     }
 
     container.append(
-        h('span', { class: 'toolbar-spacer' }),
-        button({ label: 'Create and manage tags', icon: 'cog', text: 'Manage', small: true, onClick: options.onManage }),
+        ...tags.map((tag) => {
+            const on = active.includes(tag.name);
+            const chip = h(
+                'button',
+                {
+                    type: 'button',
+                    class: [
+                        'tag-chip',
+                        'tag-chip-filter',
+                        on ? 'is-active' : '',
+                        tag.color ? 'tag-chip-colored' : '',
+                    ].filter(Boolean).join(' '),
+                    'aria-pressed': String(on),
+                    'data-tip-title': tag.description ?? null,
+                    'data-tip': `${tag.count} row${tag.count === 1 ? '' : 's'} — click to ${
+                        on ? 'stop filtering by this' : 'filter by this'
+                    }`,
+                    onClick: () => options.onToggle(tag.name),
+                },
+                icon('tag', 12),
+                h('span', { text: tag.name }),
+                h('span', { class: 'tag-chip-count', text: String(tag.count) }),
+            );
+
+            if (tag.color) paint(chip, tag.color);
+            return chip;
+        }),
     );
+
+    // After them, where the chips it clears have just been read.
+    if (active.length > 0) {
+        container.append(
+            button({
+                label: 'Clear the tag filter',
+                icon: 'close',
+                text: 'Clear',
+                small: true,
+                onClick: options.onClear,
+            }),
+        );
+    }
+
+    fitTagBar(container);
+    watchTagBar(container);
 }

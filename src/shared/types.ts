@@ -156,6 +156,10 @@ export interface Settings {
 export interface TagView {
     name: string;
     count: number;
+    /** What the tag is for, when the name does not say it. */
+    description: string | null;
+    /** `#rrggbb`, or null for a tag that has never been given one. */
+    color: string | null;
 }
 
 export interface SweepInfo {

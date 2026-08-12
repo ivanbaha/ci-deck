@@ -515,12 +515,31 @@ const gitlab = Bun.serve({
 // --- the watch list --------------------------------------------------------
 
 /** Tags cut across namespaces, which is the whole point of them. */
-const TAGS: Record<string, string[]> = {
-    'release-blocking': ['api-gateway', 'auth-service', 'ledger', 'checkout-ui', 'storefront'],
-    'on-call': ['api-gateway', 'event-bus', 'payouts', 'stream-processor', 'log-shipper'],
-    frontend: ['storefront', 'admin-console', 'design-system', 'checkout-ui', 'status-page'],
-    'needs-owner': ['backup-agent', 'dns-manager', 'release-tooling'],
-    quiet: [],
+/**
+ * One tag of every kind the board can draw: coloured and described, coloured
+ * and bare, described and colourless, neither — and an empty one, so the pane
+ * has a tag with nothing in it to show.
+ */
+const TAGS: Record<string, { repos: string[]; description?: string; color?: string }> = {
+    'release-blocking': {
+        repos: ['api-gateway', 'auth-service', 'ledger', 'checkout-ui', 'storefront'],
+        description: 'A red row here stops the release',
+        color: '#d1392b',
+    },
+    'on-call': {
+        repos: ['api-gateway', 'event-bus', 'payouts', 'stream-processor', 'log-shipper'],
+        description: 'Paged out of hours',
+        color: '#c26a00',
+    },
+    frontend: {
+        repos: ['storefront', 'admin-console', 'design-system', 'checkout-ui', 'status-page'],
+        color: '#1f75cb',
+    },
+    'needs-owner': {
+        repos: ['backup-agent', 'dns-manager', 'release-tooling'],
+        description: 'Nobody has claimed these yet',
+    },
+    quiet: { repos: [] },
 };
 
 /** Two paused rows, so the bottom of the board has something to show. */
@@ -561,8 +580,8 @@ function seed(): number {
             byName.set(repo.name, [...(byName.get(repo.name) ?? []), repo.id]);
         }
 
-        for (const [tag, repos] of Object.entries(TAGS)) {
-            store.createTag(ORIGIN, tag);
+        for (const [tag, { repos, description, color }] of Object.entries(TAGS)) {
+            store.createTag(ORIGIN, tag, { description, color });
             const ids = repos.flatMap((name) => byName.get(name) ?? []);
             if (ids.length > 0) store.setTagRepos(ORIGIN, tag, ids);
         }

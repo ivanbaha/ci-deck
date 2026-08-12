@@ -54,6 +54,17 @@ export const MAX_IMPORT_REPOS = 500;
 /** What a stage-wide control does, and to which of the stage's jobs. */
 export type StageAction = 'retry' | 'cancel' | 'play';
 
+/**
+ * A tag as the form sends it. Every field is optional on the way in: create
+ * needs only a name, and an edit writes what it was given and nothing else —
+ * which is why `null` (clear it) and absent (leave it) are different things.
+ */
+interface TagBody {
+    name?: string;
+    description?: string | null;
+    color?: string | null;
+}
+
 export class HttpError extends Error {
     readonly status: number;
 
@@ -355,31 +366,43 @@ export function createServeOptions(deps: AppDeps) {
             '/api/tags': {
                 POST: route(deps, async (request) => {
                     const baseUrl = requireBaseUrl();
-                    const body = await readJson<{ name?: string }>(request);
+                    const body = await readJson<TagBody>(request);
                     const name = body.name?.trim();
                     if (!name) throw new HttpError(400, 'A tag needs a name');
                     if (watchStore.hasTag(baseUrl, name)) {
                         throw new HttpError(409, `${name} already exists`);
                     }
 
-                    watchStore.createTag(baseUrl, name);
+                    watchStore.createTag(baseUrl, name, {
+                        description: body.description,
+                        color: body.color,
+                    });
                     runtime.refreshTags();
                     return json({ tags: store.getTags() }, 201);
                 }),
             },
 
             '/api/tags/:name': {
+                /**
+                 * The edit form's save: the name, the description and the colour
+                 * travel together. A field left out of the body is left as it
+                 * was — only what the form sends is written.
+                 */
                 PUT: route(deps, async (request) => {
                     const baseUrl = requireBaseUrl();
                     const from = params(request).name!;
-                    const body = await readJson<{ name?: string }>(request);
-                    const to = body.name?.trim();
-                    if (!to) throw new HttpError(400, 'A tag needs a name');
+                    const body = await readJson<TagBody>(request);
+                    if (body.name !== undefined && !body.name.trim()) {
+                        throw new HttpError(400, 'A tag needs a name');
+                    }
 
                     try {
-                        if (!watchStore.renameTag(baseUrl, from, to)) {
-                            throw new HttpError(404, `${from} is not a tag`);
-                        }
+                        const changed = watchStore.updateTag(baseUrl, from, {
+                            ...(body.name === undefined ? {} : { name: body.name }),
+                            ...(body.description === undefined ? {} : { description: body.description }),
+                            ...(body.color === undefined ? {} : { color: body.color }),
+                        });
+                        if (!changed) throw new HttpError(404, `${from} is not a tag`);
                     } catch (error) {
                         if (error instanceof HttpError) throw error;
                         throw new HttpError(409, describeError(error));
@@ -680,7 +703,9 @@ export function createServeOptions(deps: AppDeps) {
 
                     // Tags first, so an empty one in the file survives even when
                     // every repo carrying it was already on the board.
-                    for (const tag of parseExportTags(payload)) watchStore.createTag(baseUrl, tag);
+                    for (const tag of parseExportTags(payload)) {
+                        watchStore.mergeTag(baseUrl, tag.name, tag);
+                    }
 
                     // An export carries the board's settings, so an import applies
                     // them — a file that says nothing about them changes nothing.

@@ -175,18 +175,25 @@ a:focus-visible {
 }
 
 /*
- * Sits next to the interval control it belongs to, but dimmer than the control's
- * own label — otherwise the two run together into one sentence. Shrinks before
- * the toolbar wraps: the interval and the button matter more than the countdown.
+ * Sits next to the interval control it belongs to, dimmer than a label so the
+ * two do not run together into one sentence.
+ *
+ * A locked box, right-aligned against the control: the text under it changes
+ * twice a second, and a box that resized with it would walk the interval select
+ * and the button beside it back and forth for as long as a sweep runs. It may
+ * still shrink when the window is narrow — the interval and the button matter
+ * more than the countdown — but it never grows.
  */
 .sweep {
+    flex: 0 1 176px;
+    min-width: 0;
+    margin-left: auto;
     font-size: 12px;
     color: var(--text-dim);
+    text-align: right;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    min-width: 0;
-    margin-right: 8px;
 }
 
 /* ---------- connection ---------- */
@@ -317,25 +324,61 @@ a:focus-visible {
  * one would put the same row under three headings — the namespace stays the
  * thing the board is filed by, and this narrows it.
  */
+/*
+ * In the toolbar, between the group select and the sweep: the filters belong on
+ * one line. It takes what the fixed controls leave and wraps inside itself, so a
+ * long list of tags never pushes the toolbar apart.
+ */
 .tagbar {
     display: flex;
     align-items: center;
     gap: 6px;
     flex-wrap: wrap;
-    padding: 10px 0 0;
+    /* A fixed basis, not the content's own width: the chips changing size must
+       not change how much room the bar is given, or the two would chase each
+       other. Below that basis the toolbar wraps and the bar gets a line. */
+    flex: 1 1 220px;
+    min-width: 0;
 }
 
 .tagbar:empty {
     display: none;
 }
 
-.tagbar-label {
-    display: inline-flex;
-    align-items: center;
-    gap: 5px;
-    color: var(--text-dim);
-    font-size: 12px;
-    margin-right: 2px;
+/* Clear and Save-as-tag ride the same line, so they are the height of a chip
+   rather than of a toolbar control — a taller one would count as a line of its
+   own and stick out of the two the bar allows itself. */
+.tagbar .btn {
+    height: 24px;
+}
+
+/* Sized to the chips beside them rather than to a toolbar control, or the glyph
+   ends up the tallest thing on a line of 12px text. */
+.tagbar .btn svg {
+    width: 14px;
+    height: 14px;
+}
+
+/*
+ * Two lines is the floor: if the chips have wrapped even at this size, the bar
+ * scrolls rather than pushing the board down the page.
+ */
+.tagbar.is-compact {
+    gap: 4px;
+    max-height: 42px;
+    overflow-y: auto;
+    scrollbar-width: thin;
+    scrollbar-color: var(--border-strong) transparent;
+}
+
+.tagbar.is-compact .btn {
+    height: 19px;
+    font-size: 11px;
+}
+
+.tagbar.is-compact .btn svg {
+    width: 12px;
+    height: 12px;
 }
 
 .tag-chip {
@@ -352,10 +395,66 @@ a:focus-visible {
     white-space: nowrap;
 }
 
+.tag-chip svg {
+    flex: none;
+    color: var(--text-dim);
+}
+
+/*
+ * A tag that has been given a colour wears it: the line, the fill and the label
+ * are all that colour thinned toward the page — the border and the glyph toward
+ * transparent, the text toward the page's own, so it stays readable whatever
+ * colour was chosen. A light colour on white and a dark one on black are both a
+ * problem the mix solves and a fixed alpha does not.
+ */
+.tag-chip-colored {
+    border-color: color-mix(in srgb, var(--tag-color) 55%, transparent);
+    background: color-mix(in srgb, var(--tag-color) 13%, transparent);
+    color: color-mix(in srgb, var(--tag-color) 42%, var(--text));
+}
+
+.tag-chip-colored svg {
+    color: color-mix(in srgb, var(--tag-color) 70%, transparent);
+}
+
+/* The colour on its own, where the name is already beside it. */
+.tag-dot {
+    flex: none;
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    background: var(--tag-color);
+}
+
+.tag-dot-empty {
+    border: 1px dashed var(--border-strong);
+}
+
+/*
+ * The filter chips are the same chip a row wears, at the size of a control you
+ * click rather than a label you read past.
+ */
 .tag-chip-filter {
     font: inherit;
     font-size: 12px;
+    line-height: 22px;
+    gap: 5px;
+    padding: 0 9px 0 7px;
     cursor: pointer;
+}
+
+/* Small enough to double up: two of these lines are one of the big ones plus a
+   little, which is the whole reason the bar measures itself. */
+.is-compact .tag-chip-filter {
+    font-size: 11px;
+    line-height: 17px;
+    gap: 3px;
+    padding: 0 7px 0 5px;
+}
+
+.is-compact .tag-chip-filter svg {
+    width: 10px;
+    height: 10px;
 }
 
 .tag-chip-filter:hover {
@@ -363,10 +462,40 @@ a:focus-visible {
     color: var(--text);
 }
 
+/*
+ * Filled, not tinted. A stronger wash of the same colour is a chip you have to
+ * compare against its neighbours to read; a solid one is a different object,
+ * and which tags are on is the one thing this bar has to answer at a glance.
+ */
 .tag-chip-filter.is-active {
-    border-color: var(--blue);
-    background: var(--tint-running);
-    color: var(--blue-strong);
+    border-color: var(--accent-solid);
+    background: var(--accent-solid);
+    color: var(--on-solid);
+    font-weight: 600;
+}
+
+/* A coloured tag filters in its own colour: the same chip turned up, rather
+   than the blue that stands in for a tag with no colour of its own. */
+.tag-chip-filter.tag-chip-colored:hover {
+    border-color: color-mix(in srgb, var(--tag-color) 75%, transparent);
+    color: color-mix(in srgb, var(--tag-color) 55%, var(--text));
+}
+
+/* `--tag-ink` is white or near-black, whichever the tag's colour can carry —
+   worked out where the colour is set, since CSS cannot yet ask. */
+.tag-chip-filter.tag-chip-colored.is-active {
+    border-color: var(--tag-color);
+    background: var(--tag-color);
+    color: var(--tag-ink);
+}
+
+.tag-chip-filter.is-active:hover {
+    filter: brightness(1.08);
+}
+
+.tag-chip-filter.tag-chip-colored.is-active svg {
+    color: var(--tag-ink);
+    opacity: 0.85;
 }
 
 .tag-chip-count {
@@ -374,8 +503,14 @@ a:focus-visible {
     font-size: 11px;
 }
 
+.is-compact .tag-chip-count {
+    font-size: 10px;
+}
+
+/* The count rides the fill, a shade back from the name it belongs to. */
 .tag-chip-filter.is-active .tag-chip-count {
-    color: var(--blue-strong);
+    color: inherit;
+    opacity: 0.75;
 }
 
 /* On a row: quiet until wanted, and the whole cluster is the edit affordance. */
@@ -383,11 +518,6 @@ a:focus-visible {
     display: inline-flex;
     align-items: center;
     gap: 3px;
-    padding: 0;
-    border: 0;
-    background: none;
-    font: inherit;
-    cursor: pointer;
     /* Clips rather than pushing the flags beside it off the row. */
     min-width: 0;
     overflow: hidden;
@@ -396,32 +526,37 @@ a:focus-visible {
 .repo-tags .tag-chip {
     font-size: 10px;
     line-height: 15px;
-    padding: 0 6px;
+    gap: 3px;
+    padding: 0 5px 0 4px;
 }
 
-.repo-tags:hover .tag-chip {
-    border-color: var(--border-strong);
-    color: var(--text);
+/*
+ * Quieter on a row than anywhere else. Forty rows of chips at the strength the
+ * form previews is a board that reads as tags first and pipelines second — so
+ * on a row they sit back, and come forward on the row you are looking at.
+ */
+.repo-tags .tag-chip-colored {
+    border-color: color-mix(in srgb, var(--tag-color) 30%, transparent);
+    background: color-mix(in srgb, var(--tag-color) 7%, transparent);
+    color: color-mix(in srgb, var(--tag-color) 22%, var(--text-muted));
+}
+
+.repo-tags .tag-chip-colored svg {
+    color: color-mix(in srgb, var(--tag-color) 45%, transparent);
+}
+
+.board tr.repo:hover .repo-tags .tag-chip-colored {
+    border-color: color-mix(in srgb, var(--tag-color) 50%, transparent);
+    background: color-mix(in srgb, var(--tag-color) 11%, transparent);
+    color: color-mix(in srgb, var(--tag-color) 38%, var(--text));
+}
+
+.board tr.repo:hover .repo-tags .tag-chip-colored svg {
+    color: color-mix(in srgb, var(--tag-color) 65%, transparent);
 }
 
 .tag-chip-more {
     color: var(--text-dim);
-}
-
-/* Nothing tagged yet: a mark that appears on hover rather than an empty gap. */
-.repo-tags-empty {
-    color: var(--border);
-    opacity: 0;
-    transition: opacity 120ms ease;
-}
-
-.board tr.repo:hover .repo-tags-empty,
-.repo-tags-empty:focus-visible {
-    opacity: 1;
-}
-
-.repo-tags-empty:hover {
-    color: var(--text-muted);
 }
 
 .field {
@@ -447,8 +582,11 @@ a:focus-visible {
     border-color: var(--blue);
 }
 
+/* Narrower than it was: the tags share this line now, and a search box wide
+   enough for a sentence was never what anyone typed into it. */
 .input-search {
-    width: 260px;
+    width: 195px;
+    flex: 0 1 auto;
 }
 
 .btn {
@@ -915,9 +1053,22 @@ body.is-resizing {
 /* The branch gives up room three times faster than the name — of the two, the
    name is the one worth reading whole — and the rest of it is a hover away. */
 .repo-head .repo-ref {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
     flex: 0 3 auto;
     min-width: 0;
     max-width: 60%;
+    padding: 0 6px 0 4px;
+}
+
+.repo-ref svg {
+    flex: none;
+    color: var(--text-dim);
+}
+
+.repo-ref-name {
+    min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -1408,6 +1559,7 @@ body.is-resizing {
     cursor: help;
 }
 
+
 /* ---------- stage popover ---------- */
 .popover {
     position: fixed;
@@ -1660,6 +1812,13 @@ body.is-resizing {
     margin: 0 0 8px;
 }
 
+/* A line of context above a form — why it opened, in a whole sentence. */
+.modal-body .form-note {
+    margin: 0 0 12px;
+    color: var(--text-dim);
+    font-size: 12px;
+}
+
 /* ---------- add repo lookup ---------- */
 
 /*
@@ -1855,56 +2014,73 @@ body.is-resizing {
     white-space: nowrap;
 }
 
-/* ---------- tag dialogs ---------- */
-.tag-picker {
+/* ---------- tag form ---------- */
+/*
+ * Three ways at one colour, because they answer different questions: the
+ * swatches are "give me a sensible one", the well is "I know the one I want",
+ * and the field is "paste the one from our palette". The chip beside them is
+ * the answer to the only question that matters — how it will read on a row.
+ */
+.tag-swatches {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.swatch {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 26px;
+    height: 26px;
+    padding: 0;
+    border: 1px solid color-mix(in srgb, var(--tag-color, var(--border-strong)) 65%, transparent);
+    border-radius: 50%;
+    background: var(--tag-color, transparent);
+    color: var(--text-dim);
+    cursor: pointer;
+}
+
+/* Two rings rather than an outline, so the mark clears the swatch's own edge. */
+.swatch.is-chosen {
+    box-shadow: 0 0 0 2px var(--bg-raised), 0 0 0 4px var(--tag-color, var(--border-strong));
+}
+
+.swatch-none {
+    background: var(--bg-raised);
+    border-style: dashed;
+}
+
+.tag-color-row {
     display: flex;
     align-items: center;
-    gap: 6px;
-    flex-wrap: wrap;
-    padding: 4px;
+    gap: 8px;
+    margin-top: 8px;
+}
+
+.tag-well {
+    flex: none;
+    width: 36px;
+    height: 32px;
+    padding: 2px;
     border: 1px solid var(--border-strong);
     border-radius: var(--radius);
     background: var(--bg-raised);
+    cursor: pointer;
 }
 
-.tag-picker:focus-within {
-    border-color: var(--blue);
+.form-row .tag-hex {
+    width: 108px;
+    flex: none;
+    font-family: var(--mono);
 }
 
-.tag-chips {
-    display: contents;
-}
-
-.tag-chip-editable {
-    padding-right: 2px;
-    background: var(--bg-hover);
-}
-
-.tag-chip-editable .btn {
-    height: 16px;
-    width: 16px;
-    min-width: 16px;
-    border: 0;
-    background: none;
-    color: var(--text-dim);
-}
-
-.tag-chip-editable .btn:hover {
-    background: none;
-    color: var(--red);
-}
-
-.tag-input {
-    flex: 1;
-    min-width: 130px;
-    height: 24px;
-    border: 0;
-    background: none;
-    padding: 0 4px;
-}
-
-.tag-input:focus {
-    outline: none;
+.tag-preview {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+    overflow: hidden;
 }
 
 /* Two panes: the tags on the left, the repos that carry the chosen one on the
@@ -1987,15 +2163,16 @@ body.is-resizing {
     white-space: nowrap;
 }
 
-.tag-manage-new {
+/* The list's own heading, and the one control that adds to it. */
+.tag-manage-head {
     display: flex;
+    align-items: center;
     gap: 6px;
     flex: 0 0 auto;
 }
 
-.tag-manage-new .input {
+.tag-manage-head .spacer {
     flex: 1;
-    min-width: 0;
 }
 
 .tag-manage-main {

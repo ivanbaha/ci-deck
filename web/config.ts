@@ -6,7 +6,7 @@ import { icon } from './icons.ts';
 import { openModal, type ModalHandle } from './modal.ts';
 import { permission, requestPermission } from './notify.ts';
 import { describeCredentials, openSetup } from './setup.ts';
-import { tagsPane } from './tags.ts';
+import { type TagSeed, tagsPane } from './tags.ts';
 import { applyTheme } from './theme.ts';
 import { toastError, toastInfo } from './toast.ts';
 
@@ -256,13 +256,20 @@ async function ensurePermission(redraw: () => void): Promise<void> {
     redraw();
 }
 
-/** One window for everything that is set up rather than done. */
-export function openConfig(options: ConfigOptions, pane: ConfigPane = 'general'): void {
+/**
+ * One window for everything that is set up rather than done.
+ *
+ * `seed` is the board arriving with a tag it wants made — the Tags pane opens
+ * its form on it. Consumed on the first draw: switching to General and back is
+ * not another request to make a tag.
+ */
+export function openConfig(options: ConfigOptions, pane: ConfigPane = 'general', seed?: TagSeed): void {
     active?.close();
 
     const state = options.state();
     if (!state) return;
 
+    let pending = seed;
     let current = pane;
     const body = h('div', { class: 'config-body' });
     const nav = h('div', { class: 'config-nav' });
@@ -296,6 +303,9 @@ export function openConfig(options: ConfigOptions, pane: ConfigPane = 'general')
             ),
         );
 
+        const once = pending;
+        pending = undefined;
+
         body.replaceChildren(
             current === 'general'
                 ? generalPane(options, latest, draw)
@@ -303,6 +313,7 @@ export function openConfig(options: ConfigOptions, pane: ConfigPane = 'general')
                     repos: () => options.state()?.repos ?? [],
                     tags: () => options.state()?.tags ?? [],
                     onChange: options.reload,
+                    seed: once,
                 }),
         );
     };
