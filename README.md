@@ -3,6 +3,8 @@
 One page showing the pipeline of every repo you care about, with the GitLab controls you
 actually need: expand a stage, read a job log, retry, cancel or start a manual job.
 
+![CI Deck screenshot](./docs/assets/screenshot.png)
+
 Runs locally on [Bun](https://bun.sh) with **no runtime dependencies** — Bun's own HTTP
 server, SQLite and bundler do the work. Talks to GitLab's REST API with your personal
 access token.
