@@ -5,11 +5,8 @@ actually need: expand a stage, read a job log, retry, cancel or start a manual j
 
 ![CI Deck screenshot](./docs/assets/screenshot.png)
 
-In a couple of seconds: spot a failure, retry it, kick off the delivery gates.
-https://github.com/user-attachments/assets/62f7928f-1b17-43bd-a5cc-3f8137ddd4ef
-
 Runs locally on [Bun](https://bun.sh) with **no runtime dependencies** — Bun's own HTTP
-server, SQLite and bundler do the work. Talks to GitLab's REST API with your personal
+server, SQLite, and bundler do the work. Talks to GitLab's REST API with your personal
 access token.
 
 ```bash
@@ -65,7 +62,7 @@ shasum -a 256 -c SHA256SUMS --ignore-missing     # sha256sum -c … on Linux
 gh attestation verify ci-deck-darwin-arm64 --repo ivanbaha/ci-deck
 ```
 
-Two things to know. The files are 60–120 MB, because each one is a whole runtime. And
+Two things to know. The files are 60–120 MB because each one is a whole runtime. And
 they are not code-signed, so macOS quarantines anything downloaded with a browser:
 
 ```bash
@@ -113,7 +110,7 @@ container and a published port would otherwise reach nothing. What keeps the boa
 network is the `127.0.0.1:` in front of the port mapping. Drop that prefix and anything that
 can reach your machine can reach the board, with no authentication in front of it.
 
-**The watch list, settings and token live in `/data`** — give it a volume or they go when
+**The watch list, settings, and token live in `/data`** — give it a volume or they go when
 the container does.
 
 **A different host port needs one more flag.** The board is reached at whatever name and
@@ -127,10 +124,10 @@ docker run -p 127.0.0.1:9000:8787 -v ci-deck:/data ivbaha/ci-deck \
 Everything after the image name is passed to CI Deck, so any flag from the CLI section works
 there — including a second `--bind`, which overrides the built-in one.
 
-### Apple's `container`, and other runtimes
+### Apple's `container` and other runtimes
 
 It is an ordinary multi-arch OCI image, so anything that runs Linux containers runs it. On
-Apple's `container` the same command works, volume and all:
+Apple's `container`, the same command works, volume and all:
 
 ```bash
 container run -d -p 127.0.0.1:8787:8787 -v ci-deck:/data ivbaha/ci-deck
@@ -163,7 +160,7 @@ docker run -p 127.0.0.1:8787:8787 -v ci-deck:/data \
 ```
 
 That moves it from the volume into your shell history and `docker inspect` output, which is
-a different trade rather than a strictly better one. Compose's `env_file` avoids both.
+a different trade-off rather than a strictly better one. Compose's `env_file` avoids both.
 
 ## Installing it globally
 
@@ -215,7 +212,7 @@ status and duration, and carries the one control that applies to it:
 | --- | --- |
 | running, pending, created | cancel |
 | manual | start — confirmed first, since manual jobs often deploy |
-| failed, success, canceled, skipped | retry |
+| failed, success, cancelled, skipped | retry |
 
 The stage header carries the same three, applied to every job in the stage at once —
 retry if anything failed, otherwise cancel if anything is still going, otherwise start if
@@ -228,7 +225,7 @@ job, and an **amber dot** for one where something failed and was allowed to.
 Click the job itself to read its log: ANSI colours preserved, progress-bar spam collapsed,
 and auto-following while the job is still running. Retry, cancel and copying the raw output
 are available there too, and the view keeps up with the job across a retry even though its
-id changes.
+ID changes.
 
 **Row controls**, on the right of each row:
 
@@ -263,7 +260,7 @@ nothing in it matches. Once a search or a group has narrowed the board, **Save a
 turns what is on screen into a tag, so a set worth returning to is one click rather than
 sixty.
 
-All four live in the URL, so a reload keeps them, the back button undoes them, and a
+All four live in the URL, so a reload keeps them; the back button undoes them, and a
 filtered board is something you can send to someone. None of them changes what is watched:
 the sweep still covers every watched row, and simply visits the ones on screen first.
 
@@ -279,14 +276,14 @@ Rows themselves are read-only about it — the chips on a row say what it carrie
 more. Tags travel in an export, colours and descriptions included.
 
 **Columns.** Drag a divider in the column header to move it, or focus the handle and use
-the arrow keys. A divider trades width between the two columns either side of it and
+the arrow keys. A divider trades width between the two columns on either side of it and
 nothing else: widening Stages narrows Updated by exactly as much, until Updated hits its
 floor and the divider stops. The board never changes width doing it — the row controls hold
 a locked column and the other six divide up what is left — so there is a divider between
 each pair and none on the outside edges.
 
 Widths are stored with everything else, as proportions rather than measurements, so a
-narrower window redivides the same layout instead of overflowing and the board looks the
+narrower window redivides the same layout instead of overflowing, and the board looks the
 same in the next browser you open it in.
 
 **Sweeping.** Everything about the periodic check sits together on the right of the
@@ -295,12 +292,12 @@ the next one is due, the interval — 30s, 60s, 2m, 5m, 10m or 15m, applied the 
 pick one, default 2 minutes — and a button to check every repo right now.
 
 **The connection.** The button in the top bar is both the status and the way to change it:
-it shows who you are connected as and to which host, turns amber when the instance cannot
-be reached and red when GitLab rejects the token. Clicking it opens the credentials panel,
+It shows who you are connected as and to which host, turns amber when the instance cannot
+be reached, and red when GitLab rejects the token. Clicking it opens the credentials panel,
 where **Test** tries a URL and token against the instance and stores neither — the same
 check the save does, without committing the board to the answer. Changing the URL there
 switches instances, which is [a watch list of its own](#one-watch-list-per-instance) and
-needs that instance's own token; the dialog says so as you type.
+needs that instance's own token; the dialogue says so as you type.
 
 **Configuration.** The gear in the top bar opens everything that is set up rather than
 done: the connection and where its credentials came from, the sweep interval and the
@@ -360,7 +357,7 @@ rebuild from.
 The server answers only to names it knows: the three spellings of loopback on its port,
 plus the address given to `--bind`. Reach it by any other name — a hostname, or a port
 that a container or proxy maps to a different one — and every request is rejected before
-it reaches a handler. Name it and it works:
+it reaches a handler. Name it, and it works:
 
 ```bash
 ci-deck --bind 0.0.0.0 --origin http://ci-deck.example:8787
@@ -382,7 +379,7 @@ data directory:
 
 Override with `--db ./ci-deck.db` to keep a project-local list, e.g. one per team.
 
-The token itself is not in that file wherever the platform offers something better:
+The token itself is not in that file; wherever the platform offers something better:
 
 | Platform | Where the token goes |
 | --- | --- |
@@ -403,14 +400,14 @@ That makes switching hosts a **view swap between separate watch lists, not a mig
 
 - A host you have never used starts empty. Nothing was deleted — the rows you had are
   still in the database, filed under the host they belong to.
-- Point the board back and they all return, with their branches, tags, paused state and
+- Point the board back, and they all return, with their branches, tags, paused state and
   notification settings intact.
 - Tags belong to an instance too, so the tag bar and Configuration → Tags change with the
   rows.
 - A saved token is only ever sent to the host it was saved for, so switching means
-  entering that instance's own token. The connection dialog says so rather than silently
+  entering that instance's own token. The connection dialogue says so rather than silently
   reusing the one you had.
-- Nothing is re-resolved across the switch. A project id from one instance means a
+- Nothing is re-resolved across the switch. A project ID from one instance means a
   different project on another, which is exactly why the lists are kept apart.
 
 To watch two instances at once, run a second board against its own database
@@ -419,22 +416,22 @@ To watch two instances at once, run a second board against its own database
 ## Sharing a watch list
 
 Both live behind the caret next to **Add repo**. **Export** downloads the list; **Import**
-opens a dialog you can drop a file onto or browse for, and which offers a template so you
+opens a dialogue you can drop a file onto or browse for, and which offers a template so you
 are not guessing at the format.
 
-The dialog reads the file with the same parser the server will use and says what is about
+The dialogue reads the file with the same parser the server will use and says what is about
 to happen — how many rows it would add, how many are already on the board — before
 anything is sent. Import is additive, rows already watched are left alone, and every entry
 it skipped is listed with its reason. The paused state and the notification setting travel
 with the list. Credentials never do.
 
-An entry is a repo *and* a branch, so the same repo may appear once per branch and an
+An entry is a repo *and* a branch, so the same repo may appear once per branch, and an
 entry that names one already watched is the only kind of duplicate. A file that says
 nothing about a branch means the board's default one, which is what older files always
 meant.
 
-Exports record the instance each project id came from. Importing a list from a different
-host re-resolves every repo by path instead of trusting ids that would point elsewhere.
+Exports record the instance each project ID came from. Importing a list from a different
+host re-resolves every repo by path instead of trusting IDs that would point elsewhere.
 
 Tags travel with the list, including ones nothing carries yet, and including what each one
 looks like. A row already on the board is not re-added, but the file's tags are merged onto
@@ -466,23 +463,29 @@ Hand-written files work too — an array of names is enough, and entries may giv
 - **Two request lanes.** The sweep runs on a serialised lane; everything you trigger — job
   log, retry, cancel, per-row check — runs on a separate lane, so the UI stays responsive
   mid-sweep.
-- **Paused rows are skipped**, and are not counted in sweep progress.
+- **Paused rows are skipped** and are not counted in sweep progress.
 - **Filtering reorders the sweep, never shortens it.** The board tells the server which
-  rows are on screen and those go first, so narrowing shortens the wait for what you are
-  looking at — while a row you filtered out is still checked, and can still tell you it
+  rows are on screen, and those go first, so narrowing shortens the wait for what you are
+  looking at — while a row you filtered out is still checked, and can still tell you
   broke.
 - **Branch existence is checked sparingly.** Only for rows watching something other than
   the default branch, and at most once every five minutes, since the answer changes about
   once in a branch's life.
 - **Jobs are cached only when they cannot change.** A finished pipeline costs one request
-  per sweep; anything running, pending or manual has its jobs refetched every time,
+  per sweep; anything running, pending, or manual has its jobs refetched every time,
   because GitLab does not always bump the pipeline's `updated_at` when a single job
   changes state.
 - **Retries.** 5 attempts by default with 1/2/4/8/16s backoff, honouring `Retry-After`.
   A 401/403 is never retried: polling stops and the UI shows a banner. Other 4xx are not
   retried either. A repo that keeps failing is marked `Error` and retried next sweep.
-- **Project ids are resolved once**, when a repo is added, so sweeps never spend a request
+- **Project IDs are resolved once** when a repo is added, so sweeps never spend a request
   looking them up.
+
+## Demo
+
+*In a couple of seconds: spot a failure, retry it, kick off the delivery gates.*
+
+https://github.com/user-attachments/assets/62f7928f-1b17-43bd-a5cc-3f8137ddd4ef
 
 ## Security
 
@@ -490,15 +493,15 @@ Read this before sharing the tool.
 
 - **The server holds your token.** It is never logged, never returned by the API — the UI
   only ever sees a mask like `glpat-…4f2a` plus where it is stored — and never included in
-  an export. Anyone who can reach the HTTP port can retry and cancel pipelines as you.
-- **Stored, not encrypted-by-magic.** On Windows and macOS the token goes to the OS
-  credential store. Everywhere else it sits in the database in plain text and the UI tells
+  an export. Anyone who can reach the HTTP port can retry and cancel pipelines as you can.
+- **Stored, not encrypted-by-magic.** On Windows and macOS, the token goes to the OS
+  credential store. Everywhere else it sits in the database in plain text, and the UI tells
   you so, because encrypting it with a key the app can derive on its own would be
-  obfuscation, not protection. The data directory is `0700` where file modes apply.
+  obfuscation, not protection. The data directory is `0700`, where file modes apply.
 - **Loopback by default.** It binds to `127.0.0.1`. `--bind` will put it on another
   address — which is what containers need — and says so loudly at startup, because there is
   no authentication: anything that can reach the port can retry and cancel pipelines as
-  you. Where you point it is your call; the default is the safe one.
+  you can. Where you point it is your call; the default is the safe one.
 - **Cross-site writes are blocked.** Loopback binding does not stop a web page you have
   open from posting to `127.0.0.1`, so `POST`/`PUT`/`PATCH`/`DELETE` are rejected when the
   request carries a foreign `Origin` or a cross-site `Sec-Fetch-Site`. Header-less clients
@@ -506,15 +509,15 @@ Read this before sharing the tool.
 - **Only names it was told about are answered.** A site whose DNS is rebound to `127.0.0.1`
   looks same-origin to the browser, which sends no `Origin` at all — so every request must
   also be addressed to a name this server answers to: `127.0.0.1`, `localhost` or `[::1]`
-  on the right port, plus whatever `--bind` and `--origin` named. Anything else is rejected
+  on the right port, plus whatever `--bind` and `--origin` are named. Anything else is rejected
   before it reaches a handler, whatever the method. A rebound name never gets on that list,
   because names arrive by being declared, never by resolving here.
 - **The saved token only goes to the host it was saved for.** Changing the GitLab URL asks
   for that instance's token instead of forwarding the stored one, so no single request can
   make CI Deck present your PAT somewhere new. Testing a connection is held to the same
-  rule as saving one — it is the same check, so it is no way around it.
+  rule as saving one — it is the same check, so there is no way around it.
 - **Manual jobs are gated.** Starting one is a deploy in many pipelines, so it asks for
-  confirmation first. That can be turned off in Configuration; it is on by default and
+  confirmation first. That can be turned off in Configuration; it is on by default, and
   the switch is deliberately not somewhere you meet by accident.
 - **Token hygiene.** Use a short expiry and the narrowest scope that works (`api`). Keep
   `.env` out of version control — the shipped `.gitignore` already does that.
@@ -545,11 +548,11 @@ Read this before sharing the tool.
 | `POST` | `/api/repos/:id/jobs/:jobId/retry` \| `/cancel` \| `/play` | job actions |
 | `POST` | `/api/repos/:id/stage/:action` | `{ stage }` — the same three, over a whole stage |
 | `POST` | `/api/repos/:id/pipeline/retry` \| `/cancel` | pipeline actions |
-| `GET` | `/api/export` | download the list, for the instance the board is on |
+| `GET` | `/api/export` | download the list for the instance the board is on |
 | `POST` | `/api/import` | add repos from an uploaded list, and apply the settings it carries |
 
-A row is identified by an integer id, not by name: the same repo can be on the board once
-per branch, and a name is shared between instances besides.
+A row is identified by an integer ID, not by name: the same repo can be on the board once
+per branch, and a name can be shared between instances.
 
 ## Contributing
 
