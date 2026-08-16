@@ -5,6 +5,9 @@ actually need: expand a stage, read a job log, retry, cancel or start a manual j
 
 ![CI Deck screenshot](./docs/assets/screenshot.png)
 
+In a couple of seconds: spot a failure, retry it, kick off the delivery gates.
+https://github.com/user-attachments/assets/62f7928f-1b17-43bd-a5cc-3f8137ddd4ef
+
 Runs locally on [Bun](https://bun.sh) with **no runtime dependencies** — Bun's own HTTP
 server, SQLite and bundler do the work. Talks to GitLab's REST API with your personal
 access token.
