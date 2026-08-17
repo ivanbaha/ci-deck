@@ -8,6 +8,30 @@ versions may still change behaviour.
 
 ## [Unreleased]
 
+## [0.2.1] — 2026-08-17
+
+Image-only release. Nothing in CI Deck itself changed, so the npm package and the standalone
+binaries are `0.2.0` with a new version number.
+
+### Security
+
+- **The image ships patched Alpine packages.** It builds on `oven/bun:1.3-alpine`, which is
+  rebuilt on its own schedule and had been carrying an openssl a month behind — fifteen
+  CVEs, the worst of them a CMS authentication bypass rated 9.1. The build now upgrades the
+  base image's packages before installing anything, so a published image carries what Alpine
+  had on the day it was built rather than on the day the base image was. Nothing in the
+  package or the binaries was ever affected: both run against the openssl on your machine.
+- **The image is scanned before it is pushed.** CI scans every build and the release scans
+  again, on the layers about to ship, before the job signs in to either registry. Findings
+  Alpine has not fixed are excluded on purpose — see [SECURITY.md](SECURITY.md) for the one
+  that is currently reported and why it cannot be reached here.
+
+### Changed
+
+- **Dependabot watches the base image.** `apk upgrade` covers Alpine's own packages, but Bun
+  is a binary baked into the image rather than an apk package, so moving off a stale tag is
+  the one thing the build cannot do for itself.
+
 ## [0.2.0] — 2026-08-12
 
 ### Added
@@ -249,7 +273,8 @@ Bootstrap pre-release, published under the `beta` tag. Functionally identical to
 it existed so that npm trusted publishing could be configured against a package that
 already exists. See the `0.1.0` entry for what it contains.
 
-[Unreleased]: https://github.com/ivanbaha/ci-deck/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/ivanbaha/ci-deck/compare/v0.2.1...HEAD
+[0.2.1]: https://github.com/ivanbaha/ci-deck/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/ivanbaha/ci-deck/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/ivanbaha/ci-deck/releases/tag/v0.1.0
 [0.1.0-b1]: https://github.com/ivanbaha/ci-deck/releases/tag/v0.1.0-b1

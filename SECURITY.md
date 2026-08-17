@@ -47,3 +47,11 @@ These are documented design choices, not oversights — see the Security section
   and encrypting with a key the app can derive on its own is obfuscation, not protection.
   The UI says so, and the data directory is `0700`.
 - **A token you gave it is a token it will use.** CI Deck acts on GitLab as you, by design.
+- **OS package findings the image cannot reach.** The container image upgrades its Alpine
+  packages at build time, so a scan of a freshly built image shows nothing Alpine has
+  patched. What it does still report is
+  [CVE-2025-60876](https://security.alpinelinux.org/vuln/CVE-2025-60876) — request
+  splitting through BusyBox's `wget` applet, which Alpine has not fixed on any branch.
+  Nothing in the image runs `wget`: the health check is `bun -e` and `fetch`, and the only
+  subprocesses CI Deck ever starts are the macOS and Windows credential stores. Please do
+  report an OS package finding that something in CI Deck actually calls.

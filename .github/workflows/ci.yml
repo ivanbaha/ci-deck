@@ -210,6 +210,24 @@ jobs:
         if: always()
         run: docker logs deck
 
+      # Last, so a CVE gate can never be what hides a container that does not run.
+      # The image is already built and loaded, so this costs a scan and nothing else.
+      #
+      # `ignore-unfixed` is the whole policy. A finding Alpine has not patched cannot
+      # be patched from this side either, and failing on one would mean nobody can
+      # merge until some upstream maintainer acts. What is left is the actionable
+      # kind: a fix exists, so `apk upgrade` in the Dockerfile should already have
+      # taken it, and this failing means it did not. Findings with no fix are in
+      # SECURITY.md instead of here.
+      - name: Scan it for known vulnerabilities
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: ci-deck:ci
+          scanners: vuln
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: '1'
+
   package:
     name: package contents
     runs-on: ubuntu-latest

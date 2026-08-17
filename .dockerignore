@@ -8,6 +8,11 @@ node_modules/
 .github/
 tests/
 
+# The release scans the image before it pushes it, and the scanner keeps its
+# vulnerability database under the workspace. Nothing COPYs it, but without this
+# the build that follows would upload the whole thing as context.
+.cache/
+
 # Local secrets and databases have no business in a build context.
 .env
 .env.*

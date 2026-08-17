@@ -1,10 +1,12 @@
 version: 2
 
-# CI Deck has no runtime dependencies, so this is here for the workflows rather
-# than the package. The release workflow pins every action to a commit, which is
-# what keeps a repointed tag from reaching a job that can publish — and pinned
-# means nothing updates unless something updates it. That is this.
+# CI Deck has no runtime dependencies, so nothing here watches the package. What
+# it watches is the two things a release is made out of: the actions that publish
+# it, and the image it is published as.
 updates:
+  # The release workflow pins every action to a commit, which is what keeps a
+  # repointed tag from reaching a job that can publish — and pinned means nothing
+  # updates unless something updates it. That is this.
   - package-ecosystem: github-actions
     directory: /
     schedule:
@@ -14,3 +16,14 @@ updates:
         patterns: ['*']
     commit-message:
       prefix: 'ci'
+
+  # The Dockerfile upgrades Alpine's packages at build time, so those patch
+  # themselves. Bun does not: it is a binary baked into the base image, not an apk
+  # package, so the only way off a stale one is to move the tag. Both stages name
+  # the same image and land in one pull request.
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: monthly
+    commit-message:
+      prefix: 'build'

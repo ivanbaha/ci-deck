@@ -38,10 +38,18 @@ COPY web/ web/
 COPY --from=build /app/public/ public/
 COPY --chmod=0755 docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 
-# The one command run in this stage, and the only reason building for a foreign
-# architecture needs emulation at all. BusyBox has no way to run a program as
-# another user without forking, and the server has to be PID 1 to be told to stop.
-RUN apk add --no-cache su-exec
+# The only command run in this stage, and the only reason building for a foreign
+# architecture needs emulation at all.
+#
+# `upgrade` first, because the base image is rebuilt on its own schedule and in
+# between carries whatever Alpine had shipped by the last one — patched openssl
+# included, or not. This pulls the patches at build time instead of waiting, and
+# it stays inside the branch the base image pins, so it is a patch level and
+# never a distro upgrade.
+#
+# Then `su-exec`: BusyBox has no way to run a program as another user without
+# forking, and the server has to be PID 1 to be told to stop.
+RUN apk upgrade --no-cache && apk add --no-cache su-exec
 
 # No USER: the entrypoint starts as root only long enough to hand the data
 # directory over, then drops to `bun` for good.
