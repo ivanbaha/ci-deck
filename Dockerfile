@@ -8,7 +8,7 @@
 # It is pinned to the *build* platform deliberately: what it produces is
 # JavaScript and an empty directory, identical on every architecture, so none of
 # the work here is ever emulated when building for the other one.
-FROM --platform=$BUILDPLATFORM oven/bun:1.3-alpine AS build
+FROM --platform=$BUILDPLATFORM oven/bun:1.4-alpine AS build
 
 WORKDIR /app
 COPY package.json ./
@@ -18,7 +18,7 @@ COPY web/ web/
 
 RUN bun run build:web && mkdir -p /prepared/data
 
-FROM oven/bun:1.3-alpine
+FROM oven/bun:1.4-alpine
 
 LABEL org.opencontainers.image.source="https://github.com/ivanbaha/ci-deck"
 LABEL org.opencontainers.image.description="Watch and control GitLab pipelines for many repos on one page"
