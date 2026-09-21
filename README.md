@@ -24,8 +24,9 @@ any GitLab project URL.
 
 ## Requirements
 
-- Bun 1.2.3 or newer — that is where `Bun.serve`'s router landed. Nothing else. Or no Bun
-  at all, if you take the standalone build or the container below.
+- Bun 1.4 or newer — and the newest you can, since Bun ships fixes for its latest release
+  only. Nothing else. Or no Bun at all, if you take the standalone build or the container
+  below.
 - A GitLab personal access token with the **`api`** scope. `read_api` is not enough,
   because CI Deck retries and cancels jobs.
 

@@ -1,12 +1,13 @@
 version: 2
 
 # CI Deck has no runtime dependencies, so nothing here watches the package. What
-# it watches is the two things a release is made out of: the actions that publish
-# it, and the image it is published as.
+# it watches is the two things a release is made out of: the actions that check
+# and publish it, and the image it is published as.
 updates:
-  # The release workflow pins every action to a commit, which is what keeps a
-  # repointed tag from reaching a job that can publish — and pinned means nothing
-  # updates unless something updates it. That is this.
+  # Both workflows pin every action to a commit, which is what keeps a repointed
+  # tag from reaching any job — and pinned means nothing updates unless something
+  # updates it. That is this. The group moves both files in one pull request, so
+  # CI never checks a build with an action the release would not use.
   - package-ecosystem: github-actions
     directory: /
     schedule:

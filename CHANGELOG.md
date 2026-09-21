@@ -8,6 +8,52 @@ versions may still change behaviour.
 
 ## [Unreleased]
 
+## [0.2.2] — 2026-09-21
+
+### Fixed
+
+- **A click during a sweep often went nowhere — opening a job log while the board was
+  checking the watch list was a matter of luck.** A click only happens if the node that was
+  pressed is still there to release on, and the board was replacing them faster than a press
+  lasts: every row a sweep touched re-hung the open stage popover, so forty rows a pass
+  rebuilt its job buttons several times a second, whichever repo they belonged to. The
+  popover is now re-hung only for the row it hangs off, and its buttons are redrawn only
+  when they would come out different — an unchanged stage keeps the very button the pointer
+  is aiming at. On top of that, a press outranks the sweep: no update redraws a row until
+  the button is back up, and everything the sweep found in the meantime lands the moment it
+  is. Nothing is checked less often, and nothing is held longer than the press.
+- **Job logs no longer print pieces of control sequences the viewer does not draw.** The
+  log viewer drops a runner's cursor movement and screen control, but it only recognised the
+  common spellings of it: a sequence with `>` or `=` in front of its numbers, a colon among
+  them, or a space or punctuation mark before its final letter slipped past and reached the
+  page as text like `[>4;2m` or `[2 q`. It now reads every sequence the way the terminal
+  standard defines one, and keeps only the colours. This also clears a CodeQL alert on the
+  same pattern.
+
+### Security
+
+- **The image no longer carries OpenSSL, or a package manager.** The published `0.2.1`
+  image has since picked up ten OpenSSL CVEs — twenty findings, rated anywhere from low to
+  critical depending on whose rating a scanner goes by — and OpenSSL was what `0.2.1` was
+  cut to patch in the first place. Bun brings its own TLS and never loaded it: it was there
+  for `apk` and for BusyBox's `wget`, neither of which the board runs. The build now removes
+  `apk` once `su-exec` is in, and OpenSSL, zlib and `ssl_client` go with it. Trivy finds
+  nothing in the new image at any severity, fixed or not. The one thing given up is
+  `apk add`, inside a running container or in an image built `FROM` this one.
+- **CI runs its actions from pinned commits, as the release already did.** A tag only
+  promises where it once pointed: in March 2026, 76 of trivy-action's 77 tags were
+  force-pushed to code that stole credentials, and every workflow that named one ran it. CI
+  now runs exactly the commits the release does, and Dependabot moves both together.
+
+### Changed
+
+- **Bun 1.4 or newer is required**, up from 1.2.3. Nothing in CI Deck needed more, but Bun
+  ships fixes for its newest line only, and a floor is a promise that everything above it is
+  fit to run on. `bun upgrade` moves an older install across; the standalone binaries and
+  the image bring their own Bun and need nothing.
+- **The image runs Bun 1.4**, up from 1.3, and the type definitions the repository is
+  checked against follow it to `@types/bun` 1.4.2.
+
 ## [0.2.1] — 2026-08-17
 
 Image-only release. Nothing in CI Deck itself changed, so the npm package and the standalone
@@ -273,7 +319,8 @@ Bootstrap pre-release, published under the `beta` tag. Functionally identical to
 it existed so that npm trusted publishing could be configured against a package that
 already exists. See the `0.1.0` entry for what it contains.
 
-[Unreleased]: https://github.com/ivanbaha/ci-deck/compare/v0.2.1...HEAD
+[Unreleased]: https://github.com/ivanbaha/ci-deck/compare/v0.2.2...HEAD
+[0.2.2]: https://github.com/ivanbaha/ci-deck/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/ivanbaha/ci-deck/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/ivanbaha/ci-deck/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/ivanbaha/ci-deck/releases/tag/v0.1.0

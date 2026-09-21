@@ -52,6 +52,27 @@ describe('ansiToHtml', () => {
     it('renders unmapped 256-colour codes as plain text', () => {
         expect(ansiToHtml(`${ESC}[38;5;208morange${ESC}[0m`)).toBe('orange');
     });
+
+    it('drops every final byte but the colour one, including its neighbours', () => {
+        expect(ansiToHtml(`a${ESC}[4@b${ESC}[4lc${ESC}[6nd${ESC}[2~e`)).toBe('abcde');
+    });
+
+    it('drops private-mode sequences and those with intermediate bytes whole', () => {
+        expect(ansiToHtml(`${ESC}[?25l${ESC}[2 q${ESC}[!pready${ESC}[?25h`)).toBe('ready');
+    });
+
+    /** Final byte `m`, and still not a colour: this used to reach the page as `[>4;2m`. */
+    it('drops a sequence that only ends like a colour', () => {
+        expect(ansiToHtml(`${ESC}[>4;2mvim`)).toBe('vim');
+    });
+
+    it('drops colon-separated colour parameters rather than printing them', () => {
+        expect(ansiToHtml(`${ESC}[4:3mcurly${ESC}[4:0m`)).toBe('curly');
+    });
+
+    it('keeps a colour running across a dropped sequence', () => {
+        expect(ansiToHtml(`${ESC}[31mred ${ESC}[?25lstill${ESC}[0m`)).toBe('<span class="a-fg-31">red still</span>');
+    });
 });
 
 describe('tailLog', () => {

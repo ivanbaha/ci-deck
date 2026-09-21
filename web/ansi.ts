@@ -1,8 +1,17 @@
 const SECTION_MARKER = /section_(?:start|end):\d+:[^\r\n]*/g;
 const ERASE_IN_LINE = /\u001b\[\d*K/g;
 const SGR = /\u001b\[([0-9;]*)m/g;
-/** Any CSI sequence except SGR (`m`), which carries the colours we keep. */
-const OTHER_CSI = /\u001b\[[0-9;?]*[@-ln-~]/g;
+/**
+ * Every other CSI sequence: cursor movement and screen control, with no screen
+ * here for them to act on.
+ *
+ * Spelled the way ECMA-48 lays one out — parameter bytes `0`–`?`, intermediate
+ * bytes space–`/`, one final byte `@`–`~` — because anything narrower leaves the
+ * tail of a sequence it did not recognise printed in the log. The lookahead sets
+ * aside exactly what `SGR` parses; a sequence that merely ends in `m`, like
+ * `ESC[>4;2m`, is not one of those and goes with the rest.
+ */
+const OTHER_CSI = /\u001b\[(?![0-9;]*m)[0-?]*[ -\/]*[@-~]/g;
 
 interface SgrState {
     fg: number | null;

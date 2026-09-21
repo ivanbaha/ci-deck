@@ -10,8 +10,8 @@ bun install
 bun run start        # → http://127.0.0.1:8790
 ```
 
-You need [Bun](https://bun.sh) 1.2.3 or newer — that is where `Bun.serve`'s router landed
-— and a GitLab personal access token with the `api` scope. There is nothing else to
+You need [Bun](https://bun.sh) 1.4 or newer — the floor in `engines`, which CI holds the
+code to — and a GitLab personal access token with the `api` scope. There is nothing else to
 install; Bun's own HTTP server, SQLite and bundler do all the work.
 
 Point it at a scratch database while you work, so your real watch list stays out of it:
@@ -43,9 +43,12 @@ docker run --rm -p 127.0.0.1:8787:8787 -v ci-deck-dev:/data ci-deck
 ```
 
 Its build stage is pinned to `$BUILDPLATFORM`, so bundling `web/` is never emulated. The
-runtime stage runs exactly one command — `apk add su-exec`, which the entrypoint needs to
-drop privileges without forking — and that is the whole reason the release job sets up QEMU.
-Adding a second `RUN` there costs nothing extra now, but keep the first stage doing the work.
+runtime stage runs exactly one command, and it is the whole reason the release job sets up
+QEMU: it patches Alpine, adds `su-exec` — which the entrypoint needs to drop privileges
+without forking — and then removes apk, taking OpenSSL out of the image with it. A package
+the runtime needs goes into that same command, ahead of the removal; nothing after it has an
+`apk` to call. Adding a second `RUN` there costs nothing extra now, but keep the first stage
+doing the work.
 
 Assets are built automatically on first start and by `prepack`; `--rebuild` forces it. That
 flag is for working on `web/`: it writes into the package directory, which is fine in a
@@ -109,7 +112,7 @@ published `files`.
 
 Every push and pull request runs typecheck, tests and a bundle build on Linux, macOS and
 Windows — the credential store and data directory differ per platform. A separate job boots
-the server on Bun 1.2.3 to keep the floor in `engines` honest, and another packs the
+the server on Bun 1.4.0 to keep the floor in `engines` honest, and another packs the
 package and fails if the browser bundle is missing from the tarball.
 
 One more compiles the standalone executable and runs it from a directory with no checkout

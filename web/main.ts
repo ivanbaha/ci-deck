@@ -235,10 +235,17 @@ const anchorFinder = (id: number) => (stage: string) =>
         `[data-action="stage"][data-stage="${CSS.escape(stage)}"]`,
     ) ?? null;
 
-/** Re-renders replace the anchor node, so an open popover has to be re-hung. */
-function reattachPopover(): void {
+/**
+ * Re-renders replace the anchor node, so an open popover has to be re-hung.
+ *
+ * Only when the row it hangs off is the one that moved, though. A sweep patches
+ * every row on the board, and re-hanging this for all forty of them was rebuilding
+ * it many times a second while the user was reading it — with `movedRow` left out
+ * only by `renderAll`, which replaces the whole table and every anchor in it.
+ */
+function reattachPopover(movedRow?: number): void {
     const open = popover.openStage();
-    if (!open) return;
+    if (!open || (movedRow !== undefined && open.repo !== movedRow)) return;
 
     const repo = findRepo(open.repo);
     if (!repo) {
@@ -246,6 +253,38 @@ function reattachPopover(): void {
         return;
     }
     popover.reattach(repo, anchorFinder(open.repo), stageHandlers);
+}
+
+/**
+ * Rows a sweep refreshed while a pointer was held down, waiting for it to come
+ * back up.
+ *
+ * A click only happens if the node that was pressed is still there to release
+ * on, and a row is replaced wholesale by every update that touches it — so a
+ * sweep landing mid-press swallowed the click, which is what made opening a job
+ * log while one was running a matter of luck. What the board knows is updated
+ * either way; only the redraw waits, and never longer than the press.
+ */
+const heldRows = new Set<number>();
+let pressed = false;
+
+function drawHeldRows(): void {
+    if (pressed || heldRows.size === 0) return;
+    const held = [...heldRows];
+    heldRows.clear();
+    // Drawn from what the board knows now rather than from the view that was
+    // held, so a full re-render in the meantime is not undone row by row.
+    for (const id of held) {
+        const repo = findRepo(id);
+        if (repo) replaceRow(repo);
+    }
+}
+
+/** After the click this release generates, rather than in front of it. */
+function endPress(): void {
+    if (!pressed) return;
+    pressed = false;
+    requestAnimationFrame(drawHeldRows);
 }
 
 function renderTabs(): void {
@@ -458,6 +497,8 @@ function applyFilters(): void {
 function renderAll(): void {
     rows.clear();
     groupHeaders.clear();
+    // Every row is about to be drawn from current data, so nothing is owed.
+    heldRows.clear();
     for (const section of [...board.querySelectorAll('tbody.group-body')]) section.remove();
 
     const openStage = popover.openStage();
@@ -511,7 +552,7 @@ function replaceRow(repo: RepoView): void {
     row.hidden = !matchesFilters(repo);
     renderTabs();
     applyFilters();
-    reattachPopover();
+    reattachPopover(repo.id);
 }
 
 function applyRepo(repo: RepoView): void {
@@ -519,7 +560,12 @@ function applyRepo(repo: RepoView): void {
     const index = state.repos.findIndex((entry) => entry.id === repo.id);
     if (index === -1) state.repos.push(repo);
     else state.repos[index] = repo;
-    replaceRow(repo);
+
+    // Straight through unless a press is in progress, in which case the row is
+    // owed — and settled by the release, or by the next update if the frame that
+    // would have settled it never came because the tab was hidden.
+    heldRows.add(repo.id);
+    if (!pressed) drawHeldRows();
 }
 
 function renderMeta(): void {
@@ -773,6 +819,18 @@ document.addEventListener('mousedown', (event) => {
     if (popover.isInside(node) || node.closest('[data-action="stage"]')) return;
     popover.close();
 });
+
+// A press outranks the sweep: nothing the board is told redraws a row until the
+// button is back up. Capture, so it is on record before anything can stop it.
+document.addEventListener('pointerdown', () => { pressed = true; }, true);
+document.addEventListener('pointerup', endPress, true);
+document.addEventListener('pointercancel', endPress, true);
+// A release the page never hears about — the pointer left the window, or a
+// native menu took it — must not leave the board frozen.
+window.addEventListener('blur', endPress);
+document.addEventListener('pointermove', (event) => {
+    if (event.buttons === 0) endPress();
+}, true);
 
 document.addEventListener('keydown', (event) => {
     if (event.key !== 'Escape') return;

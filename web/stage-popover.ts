@@ -79,6 +79,28 @@ export function stageAction(
 interface ActivePopover extends OpenStage {
     element: HTMLElement;
     anchor: HTMLElement;
+    /** What the current buttons were drawn from; see `contentKey`. */
+    key: string;
+}
+
+/**
+ * Everything `buildContent` draws, as one string.
+ *
+ * A sweep re-renders the row this hangs off several times a pass, and rebuilding
+ * the buttons each time takes them out from under the pointer: a press whose
+ * release lands on a different node produces no click at all, which is why
+ * opening a job log during a sweep used to be a coin toss. Comparing this first
+ * means an unchanged stage keeps the very buttons the user is aiming at.
+ */
+export function contentKey(repo: RepoView, stage: StageView): string {
+    return [
+        repo.name,
+        stage.name,
+        stage.status,
+        ...stage.jobs.map((job) =>
+            [job.id, job.name, job.status, job.durationSeconds, job.retriedAttempts, job.allowFailure].join('~'),
+        ),
+    ].join('|');
 }
 
 const GAP = 6;
@@ -232,13 +254,17 @@ export function toggle(
     const element = buildContent(repo, stage);
     document.body.appendChild(element);
     anchor.setAttribute('aria-expanded', 'true');
-    active = { repo: repo.id, stage: stage.name, element, anchor };
+    active = { repo: repo.id, stage: stage.name, element, anchor, key: contentKey(repo, stage) };
     position();
 }
 
 /**
  * Re-attaches an open popover after its row was re-rendered; the old anchor node
  * is gone by then, so the bubble is looked up again.
+ *
+ * The contents are only rebuilt when they would come out different. Re-hanging
+ * is cheap and always needed — the anchor this positions against was just
+ * replaced — but redrawing the buttons is not free to the person using them.
  */
 export function reattach(
     repo: RepoView,
@@ -254,11 +280,18 @@ export function reattach(
         return;
     }
 
-    const element = buildContent(repo, stage);
-    active.element.replaceWith(element);
-    anchor.setAttribute('aria-expanded', 'true');
     handlers = stageHandlers;
-    active = { repo: repo.id, stage: stage.name, element, anchor };
+    anchor.setAttribute('aria-expanded', 'true');
+    active.anchor = anchor;
+
+    const key = contentKey(repo, stage);
+    if (key !== active.key) {
+        const element = buildContent(repo, stage);
+        active.element.replaceWith(element);
+        active.element = element;
+        active.key = key;
+    }
+
     position();
 }
 

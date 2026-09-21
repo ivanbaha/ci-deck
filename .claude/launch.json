@@ -1,0 +1,11 @@
+{
+    "version": "0.0.1",
+    "configurations": [
+        {
+            "name": "fixture",
+            "runtimeExecutable": "bun",
+            "runtimeArgs": ["run", "fixture"],
+            "port": 8790
+        }
+    ]
+}
